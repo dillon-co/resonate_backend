@@ -8,14 +8,14 @@ class SessionsController < ApplicationController
   def create
     if user = User.authenticate_by(params.permit(:email_address, :password))
       start_new_session_for user
-      redirect_to after_authentication_url
+      render json: { data: { token: Current.session.token  } }
     else
-      redirect_to new_session_path, alert: "Try another email address or password."
+      render json: {}, status: :unauthorized
     end
   end
 
   def destroy
     terminate_session
-    redirect_to new_session_path
+    render json: {}, status: :ok
   end
 end

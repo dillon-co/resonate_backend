@@ -3,7 +3,6 @@ module Authentication
 
   included do
     before_action :require_authentication
-    helper_method :authenticated?
   end
 
   class_methods do
@@ -22,31 +21,28 @@ module Authentication
     end
 
     def resume_session
-      Current.session ||= find_session_by_cookie
+      Current.session ||= find_session_by_token
     end
 
-    def find_session_by_cookie
-      Session.find_by(id: cookies.signed[:session_id]) if cookies.signed[:session_id]
+    def find_session_by_token
+      Session.find_by(token: request.headers[:authorization]&.split(" ")[-1])
     end
 
     def request_authentication
-      session[:return_to_after_authenticating] = request.url
-      redirect_to new_session_path
+      render json: { error: "Authentication required" }, status: :unauthorized
     end
 
     def after_authentication_url
-      session.delete(:return_to_after_authenticating) || root_url
+      session.delete(:return_to_after_authenticating) || "/"
     end
 
     def start_new_session_for(user)
       user.sessions.create!(user_agent: request.user_agent, ip_address: request.remote_ip).tap do |session|
         Current.session = session
-        cookies.signed.permanent[:session_id] = { value: session.id, httponly: true, same_site: :lax }
       end
     end
 
     def terminate_session
       Current.session.destroy
-      cookies.delete(:session_id)
     end
 end

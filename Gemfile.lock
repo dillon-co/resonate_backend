@@ -195,6 +195,9 @@ GEM
     omniauth-oauth2 (1.8.0)
       oauth2 (>= 1.4, < 3)
       omniauth (~> 2.0)
+    omniauth-rails_csrf_protection (1.0.2)
+      actionpack (>= 4.2)
+      omniauth (~> 2.0)
     omniauth-spotify (0.0.13)
       omniauth-oauth2 (~> 1.1)
     ostruct (0.6.1)
@@ -356,6 +359,8 @@ DEPENDENCIES
   brakeman
   debug
   kamal
+  omniauth (~> 2.1, >= 2.1.2)
+  omniauth-rails_csrf_protection (~> 1.0, >= 1.0.2)
   omniauth-spotify
   pg (~> 1.1)
   puma (>= 5.0)

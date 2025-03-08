@@ -11,4 +11,13 @@ Rails.application.routes.draw do
 
   # Defines the root path route ("/")
   # root "posts#index"
+
+  namespace :api do
+    namespace :v1 do
+      resources :users, only: [:index, :create]
+      
+      # Pre-launch signup endpoint
+      post '/signups', to: 'signups#create'
+    end
+  end
 end

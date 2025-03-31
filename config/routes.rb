@@ -23,6 +23,7 @@ Rails.application.routes.draw do
         
         collection do
           get 'discover', to: 'users#discover_users'
+          get 'music_recommendations', to: 'users#music_recommendations'
         end
       end
       

@@ -67,6 +67,27 @@ class Api::V1::UsersController < ApplicationController
     render json: sorted_users
   end
   
+  def music_recommendations
+    # Get music recommendations based on friends' listening habits
+    recommendations = Current.user.friend_based_recommendations(limit: params[:limit]&.to_i || 20)
+    
+    # Format the response
+    formatted_recommendations = recommendations.map do |track|
+      {
+        id: track['id'],
+        name: track['name'],
+        artist: track['artists'].first['name'],
+        album: track['album']['name'],
+        album_art_url: track['album']['images'].first['url'],
+        popularity: track['popularity'],
+        preview_url: track['preview_url'],
+        uri: track['uri']
+      }
+    end
+    
+    render json: formatted_recommendations
+  end
+  
   private
 
   def user_params

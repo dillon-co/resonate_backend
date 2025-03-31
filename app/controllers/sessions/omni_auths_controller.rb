@@ -5,8 +5,9 @@ class Sessions::OmniAuthsController < ApplicationController
       auth = request.env["omniauth.auth"]
       uid = auth["uid"] || auth["info"]["id"]
       provider = auth["provider"]
-      # Store redirect path but have a fallback
-      redirect_path = request.env["omniauth.origin"] || root_path
+      
+      # Use the stored redirect_uri from the session if available, otherwise fallback to omniauth.origin or root_path
+      redirect_path = session.delete(:omniauth_redirect_uri) || request.env["omniauth.origin"] || root_path
       identity = OmniAuthIdentity.find_by(uid: uid, provider: provider)
       
       if authenticated?
@@ -51,7 +52,7 @@ class Sessions::OmniAuthsController < ApplicationController
         start_new_session_for identity.user
         
         # Generate a token you can pass to the frontend
-        auth_token = generate_auth_token(identity.user) # You need to implement this method
+        auth_token = generate_auth_token(identity.user)
         
         # Redirect to the frontend with the token as a URL parameter
         redirect_to "#{redirect_path}?auth_token=#{auth_token}&user_id=#{identity.user.id}&user_name=#{identity.user.display_name}&user_profile_photo_url=#{identity.user.profile_photo_url}"

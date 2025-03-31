@@ -6,8 +6,20 @@ class Sessions::OmniAuthsController < ApplicationController
       uid = auth["uid"] || auth["info"]["id"]
       provider = auth["provider"]
       
-      # Get the redirect_uri from the session or request
-      redirect_path = session.delete(:omniauth_redirect_uri) || request.env["omniauth.origin"] || "/"
+      # Get the redirect_uri from the session or request params
+      # If running locally, redirect to localhost:5173, otherwise use the origin
+      redirect_uri = session.delete(:omniauth_redirect_uri)
+      
+      # If no explicit redirect_uri was provided, check the origin or use a default
+      if redirect_uri.blank?
+        origin = request.env["omniauth.origin"]
+        redirect_uri = if Rails.env.development? || origin&.include?('localhost')
+                        "http://localhost:5173"
+                      else
+                        origin || "https://dillon-co.github.io"
+                      end
+      end
+      
       identity = OmniAuthIdentity.find_by(uid: uid, provider: provider)
       
       if authenticated?
@@ -18,61 +30,19 @@ class Sessions::OmniAuthsController < ApplicationController
           # Give the user model the option to update itself with the new information
           Current.user.signed_in_with_oauth(auth)
           
-          # Return success HTML with script to close popup and notify parent window
-          render html: <<~HTML.html_safe
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <title>Account Linked</title>
-              <script>
-                window.opener.postMessage({ success: true, message: "Account linked" }, "*");
-                window.close();
-              </script>
-            </head>
-            <body>
-              <p>Account linked successfully. You can close this window.</p>
-            </body>
-            </html>
-          HTML
+          # Redirect back to the frontend with success message
+          redirect_to "#{redirect_uri}#success=true&message=Account+linked"
         else
           # Identity was found, check relation to current user
           if Current.user == identity.user
             # Update the user's OAuth tokens even if already linked
             Current.user.signed_in_with_oauth(auth)
             
-            # Return success HTML with script to close popup and notify parent window
-            render html: <<~HTML.html_safe
-              <!DOCTYPE html>
-              <html>
-              <head>
-                <title>Account Already Linked</title>
-                <script>
-                  window.opener.postMessage({ success: true, message: "Account already linked" }, "*");
-                  window.close();
-                </script>
-              </head>
-              <body>
-                <p>Account already linked. You can close this window.</p>
-              </body>
-              </html>
-            HTML
+            # Redirect back to the frontend with success message
+            redirect_to "#{redirect_uri}#success=true&message=Account+already+linked"
           else
             # The identity is not associated with the current_user, illegal state
-            render html: <<~HTML.html_safe
-              <!DOCTYPE html>
-              <html>
-              <head>
-                <title>Account Mismatch</title>
-                <script>
-                  window.opener.postMessage({ success: false, error: "Account mismatch" }, "*");
-                  window.close();
-                </script>
-              </head>
-              <body>
-                <p>Account mismatch error. You can close this window.</p>
-              </body>
-              </html>
-            HTML
+            redirect_to "#{redirect_uri}#success=false&error=Account+mismatch"
           end
         end
       else
@@ -100,48 +70,21 @@ class Sessions::OmniAuthsController < ApplicationController
         # Generate a token you can pass to the frontend
         auth_token = generate_auth_token(identity.user)
         
-        # Return HTML with JavaScript that will pass the token to the parent window and close
-        render html: <<~HTML.html_safe
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>Authentication Successful</title>
-            <script>
-              window.opener.postMessage({
-                success: true,
-                auth_token: "#{auth_token}",
-                user_id: "#{identity.user.id}",
-                user_name: "#{identity.user.display_name}",
-                user_profile_photo_url: "#{identity.user.profile_photo_url}"
-              }, "*");
-              window.close();
-            </script>
-          </head>
-          <body>
-            <p>Authentication successful! You can close this window.</p>
-          </body>
-          </html>
-        HTML
+        # Redirect to the frontend with the token in the URL fragment
+        redirect_to "#{redirect_uri}#auth_token=#{auth_token}&user_id=#{identity.user.id}&user_name=#{identity.user.display_name}&user_profile_photo_url=#{identity.user.profile_photo_url}"
       end
     end
   
     def failure
-      # Return HTML with JavaScript that will notify the parent window of failure and close
-      render html: <<~HTML.html_safe
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Authentication Failed</title>
-          <script>
-            window.opener.postMessage({ success: false, error: "Authentication failed" }, "*");
-            window.close();
-          </script>
-        </head>
-        <body>
-          <p>Authentication failed. You can close this window.</p>
-        </body>
-        </html>
-      HTML
+      # Determine the appropriate redirect URI based on the environment
+      redirect_uri = if Rails.env.development?
+                      "http://localhost:5173"
+                    else
+                      "https://dillon-co.github.io"
+                    end
+      
+      # Redirect to the frontend with error message
+      redirect_to "#{redirect_uri}#success=false&error=Authentication+failed"
     end
 
     private

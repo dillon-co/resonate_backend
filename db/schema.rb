@@ -10,9 +10,20 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2025_03_08_215956) do
+ActiveRecord::Schema[8.0].define(version: 2025_03_20_230917) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
+
+  create_table "friendships", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "friend_id", null: false
+    t.integer "status"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["friend_id"], name: "index_friendships_on_friend_id"
+    t.index ["user_id", "friend_id"], name: "index_friendships_on_user_id_and_friend_id", unique: true
+    t.index ["user_id"], name: "index_friendships_on_user_id"
+  end
 
   create_table "omni_auth_identities", force: :cascade do |t|
     t.string "uid"
@@ -44,9 +55,17 @@ ActiveRecord::Schema[8.0].define(version: 2025_03_08_215956) do
     t.string "password_digest", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "display_name"
+    t.string "profile_photo_url"
+    t.string "spotify_id"
+    t.string "spotify_access_token"
+    t.string "spotify_refresh_token"
+    t.datetime "spotify_token_expires_at"
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
   end
 
+  add_foreign_key "friendships", "users"
+  add_foreign_key "friendships", "users", column: "friend_id"
   add_foreign_key "omni_auth_identities", "users"
   add_foreign_key "sessions", "users"
 end

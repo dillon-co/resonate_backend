@@ -1,6 +1,617 @@
 class User < ApplicationRecord
   has_secure_password
   has_many :sessions, dependent: :destroy
-
   normalizes :email_address, with: ->(e) { e.strip.downcase }
+  
+  # Friendship associations
+  has_many :friendships
+  has_many :friends, -> { where(friendships: { status: :accepted }) }, through: :friendships
+  has_many :received_friendships, class_name: 'Friendship', foreign_key: 'friend_id'
+  has_many :received_friends, through: :received_friendships, source: :user
+
+  # OAuth methods
+  def self.create_from_oauth(auth)
+    email = auth.info['email']
+    
+    user = self.new(
+      email_address: email, 
+      password: SecureRandom.base64(64).truncate_bytes(64), 
+      display_name: auth.info['display_name'] || auth.info['name'], 
+      profile_photo_url: auth.info['images']&.first&.fetch('url', nil),
+      spotify_id: auth.uid || auth.info['id'],
+      spotify_access_token: auth.credentials.token,
+      spotify_refresh_token: auth.credentials.refresh_token,
+      spotify_token_expires_at: Time.at(auth.credentials.expires_at)
+    )
+    user.save
+    user
+  end
+  
+  def signed_in_with_oauth(auth)
+    update(
+      spotify_access_token: auth.credentials.token,
+      spotify_refresh_token: auth.credentials.refresh_token,
+      spotify_token_expires_at: Time.at(auth.credentials.expires_at),
+      display_name: auth.info['display_name'] || auth.info['name'],
+      profile_photo_url: auth.info['images']&.first&.fetch('url', nil)
+    )
+  end
+  
+  #-----------------------
+  # Spotify API Methods
+  #-----------------------
+  
+  def get_top_tracks(time_range: 'medium_term', limit: 50)
+    # time_range options: short_term (4 weeks), medium_term (6 months), long_term (years)
+    response = spotify_api_call("me/top/tracks", params: { time_range: time_range, limit: limit })
+    format_tracks_response(response)
+  end
+  
+  def get_top_artists(time_range: 'medium_term', limit: 50)
+    response = spotify_api_call("me/top/artists", params: { time_range: time_range, limit: limit })
+    format_artists_response(response)
+  end
+  
+  def get_recently_played(limit: 50)
+    spotify_api_call("me/player/recently-played", params: { limit: limit })
+  end
+  
+  def get_saved_tracks(limit: 50, offset: 0)
+    spotify_api_call("me/tracks", params: { limit: limit, offset: offset })
+  end
+  
+  def get_playlists(limit: 50, offset: 0)
+    spotify_api_call("me/playlists", params: { limit: limit, offset: offset })
+  end
+  
+  def get_recommendations(seed_artists: nil, seed_tracks: nil, seed_genres: nil, limit: 20)
+    params = { limit: limit }
+    params[:seed_artists] = seed_artists.join(',') if seed_artists && !seed_artists.empty?
+    params[:seed_tracks] = seed_tracks.join(',') if seed_tracks && !seed_tracks.empty?
+    params[:seed_genres] = seed_genres.join(',') if seed_genres && !seed_genres.empty?
+    
+    spotify_api_call("recommendations", params: params)
+  end
+  
+  def get_audio_features(track_ids)
+    # track_ids should be an array of Spotify track IDs
+    return [] if track_ids.empty?
+    
+    # Spotify API allows up to 100 track IDs per request
+    track_ids.each_slice(100).flat_map do |batch|
+      response = spotify_api_call("audio-features", params: { ids: batch.join(',') })
+      response && response['audio_features'] ? response['audio_features'] : []
+    end
+  end
+  
+  # Get full Spotify user profile
+  def get_spotify_profile
+    spotify_api_call("me")
+  end
+  
+  # Get a specific track
+  def get_track(track_id)
+    spotify_api_call("tracks/#{track_id}")
+  end
+  
+  # Get several tracks at once
+  def get_tracks(track_ids)
+    return [] if track_ids.empty?
+    
+    # Spotify API allows up to 50 track IDs per request
+    track_ids.each_slice(50).flat_map do |batch|
+      response = spotify_api_call("tracks", params: { ids: batch.join(',') })
+      response && response['tracks'] ? response['tracks'] : []
+    end
+  end
+  
+  # Get all user's liked songs (paginated requests)
+  def get_all_saved_tracks
+    tracks = []
+    offset = 0
+    limit = 50
+    
+    loop do
+      response = get_saved_tracks(limit: limit, offset: offset)
+      break unless response && response['items']
+      
+      tracks.concat(response['items'])
+      break if response['items'].size < limit
+      
+      offset += limit
+    end
+    
+    tracks
+  end
+  
+  #-----------------------
+  # Music Discovery Methods
+  #-----------------------
+  
+  # Get tracks that your friends listen to that you don't
+  def discover_new_tracks_from_friends(limit: 30)
+    # Collect top tracks from all friends
+    friend_tracks = friends.flat_map do |friend| 
+      begin
+        friend_top = friend.get_top_tracks
+        friend_top && friend_top['items'] ? friend_top['items'] : []
+      rescue => e
+        Rails.logger.error("Error fetching friend tracks: #{e.message}")
+        []
+      end
+    end
+    
+    # Get your top track IDs to filter them out
+    my_top = get_top_tracks
+    my_top_track_ids = my_top && my_top['items'] ? my_top['items'].map { |t| t['id'] } : []
+    
+    my_saved = get_saved_tracks
+    my_saved_track_ids = my_saved && my_saved['items'] ? my_saved['items'].map { |t| t['track']['id'] } : []
+    
+    my_track_ids = (my_top_track_ids + my_saved_track_ids).uniq
+    
+    # Filter out tracks you already know
+    new_tracks = friend_tracks.reject { |track| my_track_ids.include?(track['id']) }
+    
+    # Count occurrence of each track among friends (popularity among your circle)
+    track_counts = Hash.new(0)
+    new_tracks.each { |track| track_counts[track['id']] += 1 }
+    
+    # Sort by popularity among friends and take top ones
+    popular_track_ids = track_counts.sort_by { |_, count| -count }.take(limit).map(&:first)
+    
+    # Return the actual track objects for the top tracks
+    popular_track_ids.map { |id| new_tracks.find { |t| t['id'] == id } }.compact
+  end
+  
+  # Find musical compatibility score with another user
+  def musical_compatibility_with(other_user, depth: :medium)
+    time_range = time_range_for_depth(depth)
+    
+    # Get both users' top artists
+    my_artists_response = get_top_artists(time_range: time_range)
+    their_artists_response = other_user.get_top_artists(time_range: time_range)
+    
+    my_artists = my_artists_response && my_artists_response['items'] ? my_artists_response['items'] : []
+    their_artists = their_artists_response && their_artists_response['items'] ? their_artists_response['items'] : []
+    
+    my_artist_ids = my_artists.map { |a| a['id'] }
+    their_artist_ids = their_artists.map { |a| a['id'] }
+    
+    # Calculate overlap
+    common_artists = my_artist_ids & their_artist_ids
+    total_artists = my_artist_ids | their_artist_ids
+    
+    # Simple Jaccard similarity coefficient
+    artist_similarity = total_artists.empty? ? 0 : (common_artists.size.to_f / total_artists.size)
+    
+    # Get audio features for both users' top tracks to compare musical preferences
+    my_tracks_response = get_top_tracks(time_range: time_range)
+    their_tracks_response = other_user.get_top_tracks(time_range: time_range)
+    
+    my_tracks = my_tracks_response && my_tracks_response['items'] ? my_tracks_response['items'] : []
+    their_tracks = their_tracks_response && their_tracks_response['items'] ? their_tracks_response['items'] : []
+    
+    # Compare audio features if there are tracks
+    feature_similarity = 0
+    if !my_tracks.empty? && !their_tracks.empty?
+      my_track_ids = my_tracks.map { |t| t['id'] }
+      their_track_ids = their_tracks.map { |t| t['id'] }
+      
+      my_features = get_audio_features(my_track_ids)
+      their_features = other_user.get_audio_features(their_track_ids)
+      
+      # Compare average features (energy, valence, danceability, etc.)
+      feature_similarity = calculate_feature_similarity(my_features, their_features)
+    end
+    
+    # Combine metrics (you can adjust weights)
+    overall_score = (artist_similarity * 0.6) + (feature_similarity * 0.4)
+    
+    # Return score as percentage
+    (overall_score * 100).round(1)
+  end
+  
+  # Generate recommendations based on friends' listening habits
+  def friend_based_recommendations(limit: 20)
+    # Get seed tracks from friends' top tracks
+    seed_tracks = friends.flat_map do |friend|
+      begin
+        friend_top = friend.get_top_tracks(limit: 5)
+        friend_top && friend_top['items'] ? friend_top['items'].map { |t| t['id'] } : []
+      rescue => e
+        Rails.logger.error("Error fetching friend tracks: #{e.message}")
+        []
+      end
+    end
+    
+    # Ensure we have at most 5 seed tracks (Spotify API limit)
+    seed_tracks = seed_tracks.sample([5, seed_tracks.size].min)
+    
+    # Get recommendations
+    return [] if seed_tracks.empty?
+    
+    recommendations = get_recommendations(seed_tracks: seed_tracks, limit: limit)
+    recommendations && recommendations['tracks'] ? recommendations['tracks'] : []
+  end
+  
+  # Get genre breakdown of user's music taste
+  def genre_breakdown
+    artists_response = get_top_artists(limit: 50)
+    artists = artists_response && artists_response['items'] ? artists_response['items'] : []
+    return {} if artists.empty?
+    
+    # Collect all genres from top artists
+    genres = artists.flat_map { |artist| artist['genres'] || [] }
+    
+    # Count occurrences
+    genre_counts = Hash.new(0)
+    genres.each { |genre| genre_counts[genre] += 1 }
+    
+    # Calculate percentages
+    total = genre_counts.values.sum.to_f
+    return {} if total == 0
+    
+    genre_counts.transform_values { |count| ((count / total) * 100).round(1) }
+                .sort_by { |_, percentage| -percentage }
+                .to_h
+  end
+  
+  # Get users with similar music taste
+  def find_similar_users(min_score: 50, limit: 10)
+    # This method should be optimized for larger user bases
+    # For a small application, this approach works fine
+    
+    # Get all users except self
+    other_users = User.where.not(id: id)
+    
+    # Calculate compatibility with each user
+    user_scores = other_users.map do |user|
+      score = musical_compatibility_with(user)
+      { user: user, score: score }
+    end
+    
+    # Filter by minimum score and sort by highest compatibility
+    user_scores.select { |item| item[:score] >= min_score }
+              .sort_by { |item| -item[:score] }
+              .take(limit)
+  end
+  
+  #-----------------------
+  # Friendship Methods
+  #-----------------------
+  
+  # Send a friend request
+  def send_friend_request(other_user)
+    return false if self == other_user
+    return false if friends.include?(other_user)
+    return false if friendships.where(friend: other_user).exists?
+    
+    friendships.create(friend: other_user, status: :pending)
+  end
+  
+  # Accept a friend request
+  def accept_friend_request(other_user)
+    friendship = received_friendships.find_by(user: other_user, status: :pending)
+    return false unless friendship
+    
+    friendship.update(status: :accepted)
+    true
+  end
+  
+  # Reject a friend request
+  def reject_friend_request(other_user)
+    friendship = received_friendships.find_by(user: other_user, status: :pending)
+    return false unless friendship
+    
+    friendship.update(status: :rejected)
+    true
+  end
+  
+  # Remove a friend
+  def remove_friend(other_user)
+    friendship = friendships.find_by(friend: other_user, status: :accepted)
+    reverse_friendship = received_friendships.find_by(user: other_user, status: :accepted)
+    
+    if friendship
+      friendship.destroy
+      return true
+    elsif reverse_friendship
+      reverse_friendship.destroy
+      return true
+    end
+    
+    false
+  end
+  
+  # Get pending friend requests sent by this user
+  def pending_friend_requests
+    friendships.where(status: :pending)
+  end
+  
+  # Get pending friend requests received by this user
+  def friend_requests
+    received_friendships.where(status: :pending)
+  end
+  
+  # Check if users are friends
+  def friends_with?(other_user)
+    friends.include?(other_user)
+  end
+  
+  # Get mutual friends with another user
+  def mutual_friends_with(other_user)
+    friends & other_user.friends
+  end
+  
+  # Get friendship status with another user
+  def friendship_status_with(other_user)
+    # Check if there's a friendship record in either direction
+    friendship = friendships.find_by(friend: other_user)
+    reverse_friendship = received_friendships.find_by(user: other_user)
+    
+    if friendship
+      return { status: friendship.status, direction: :outgoing }
+    elsif reverse_friendship
+      return { status: reverse_friendship.status, direction: :incoming }
+    else
+      return { status: :none, direction: nil }
+    end
+  end
+  
+  # Get all users who might be suggested as friends (friends of friends)
+  def friend_suggestions(limit: 10)
+    # Get all friends of friends
+    potential_friends = friends.flat_map do |friend|
+      friend.friends
+    end
+    
+    # Remove duplicates and existing friends
+    potential_friends = potential_friends.uniq - [self] - friends.to_a
+    
+    # Count mutual friends for each potential friend
+    suggestions = potential_friends.map do |potential_friend|
+      mutual_count = (friends & potential_friend.friends).size
+      { user: potential_friend, mutual_friends_count: mutual_count }
+    end
+    
+    # Sort by number of mutual friends and take the top ones
+    suggestions.sort_by { |suggestion| -suggestion[:mutual_friends_count] }.take(limit)
+  end
+  
+  # Music data caching to reduce API calls
+  def cache_music_data!
+    # This method can be called by a background job to periodically
+    # fetch and store music data for faster access
+    
+    Rails.cache.write("user:#{id}:top_tracks:medium_term", get_top_tracks, expires_in: 1.day)
+    Rails.cache.write("user:#{id}:top_artists:medium_term", get_top_artists, expires_in: 1.day)
+    Rails.cache.write("user:#{id}:genre_breakdown", genre_breakdown, expires_in: 1.day)
+    
+    # More caching as needed
+  end
+  
+  private
+  
+  def spotify_api_call(endpoint, method: :get, params: {}, body: nil)
+    # Try to refresh token if expired
+    refresh_success = refresh_token_if_expired
+    
+    # If token refresh failed and we don't have a valid token, return empty data
+    if !refresh_success && spotify_token_expired?
+      return method == :get ? {} : false
+    end
+    
+    url = "https://api.spotify.com/v1/#{endpoint}"
+    
+    response = Faraday.new do |conn|
+      conn.request :json
+      conn.response :json
+    end.send(method) do |req|
+      req.url url
+      req.headers['Authorization'] = "Bearer #{spotify_access_token}"
+      req.params = params if params.present?
+      req.body = body if body.present?
+    end
+    
+    if response.status == 200
+      response.body
+    elsif response.status == 401
+      # Force token refresh and retry once
+      refresh_success = refresh_spotify_token!
+      
+      # If token refresh failed, return empty data
+      unless refresh_success
+        return method == :get ? {} : false
+      end
+      
+      # Retry the request with fresh token
+      response = Faraday.new do |conn|
+        conn.request :json
+        conn.response :json
+      end.send(method) do |req|
+        req.url url
+        req.headers['Authorization'] = "Bearer #{spotify_access_token}"
+        req.params = params if params.present?
+        req.body = body if body.present?
+      end
+      
+      if response.status == 200
+        response.body
+      else
+        Rails.logger.error("Spotify API error after token refresh: #{response.status} - #{response.body}")
+        method == :get ? {} : false
+      end
+    else
+      Rails.logger.error("Spotify API error: #{response.status} - #{response.body}")
+      method == :get ? {} : false
+    end
+  end
+  
+  def refresh_token_if_expired
+    return true unless spotify_token_expired?
+    refresh_spotify_token!
+  end
+  
+  def spotify_token_expired?
+    spotify_token_expires_at.nil? || spotify_token_expires_at < Time.current
+  end
+  
+  def refresh_spotify_token!
+    # Check if refresh token exists
+    unless spotify_refresh_token.present?
+      Rails.logger.error("Cannot refresh Spotify token: No refresh token available")
+      return false
+    end
+    
+    # You'll need to set these in your environment or credentials
+    client_id = ENV['SPOTIFY_CLIENT_ID']
+    client_secret = ENV['SPOTIFY_CLIENT_SECRET']
+    
+    response = Faraday.new(url: 'https://accounts.spotify.com/api/token') do |conn|
+      conn.request :url_encoded
+      conn.response :json
+    end.post do |req|
+      req.headers['Authorization'] = "Basic #{Base64.strict_encode64("#{client_id}:#{client_secret}")}"
+      req.headers['Content-Type'] = 'application/x-www-form-urlencoded'
+      req.body = {
+        grant_type: 'refresh_token',
+        refresh_token: spotify_refresh_token
+      }
+    end
+    
+    if response.status == 200
+      update(
+        spotify_access_token: response.body['access_token'],
+        spotify_token_expires_at: Time.current + response.body['expires_in'].seconds
+      )
+      
+      # If a new refresh token is provided, update that too
+      if response.body['refresh_token'].present?
+        update(spotify_refresh_token: response.body['refresh_token'])
+      end
+      
+      true
+    else
+      Rails.logger.error("Failed to refresh Spotify token: #{response.body}")
+      false
+    end
+  end
+  
+  def time_range_for_depth(depth)
+    case depth
+    when :shallow then 'short_term'  # Recent 4 weeks
+    when :medium then 'medium_term'  # Last 6 months (default)
+    when :deep then 'long_term'      # Several years
+    else 'medium_term'
+    end
+  end
+  
+  def calculate_feature_similarity(my_features, their_features)
+    return 0 if my_features.empty? || their_features.empty?
+    
+    # Features to compare
+    compared_features = %w[danceability energy valence acousticness instrumentalness tempo]
+    
+    # Calculate averages for each feature
+    my_averages = calculate_feature_averages(my_features, compared_features)
+    their_averages = calculate_feature_averages(their_features, compared_features)
+    
+    # Calculate distance between feature vectors (normalized)
+    total_difference = 0
+    feature_count = 0
+    
+    compared_features.each do |feature|
+      # Skip if either average is nil
+      next unless my_averages[feature] && their_averages[feature]
+      
+      # For tempo, we need to normalize the values
+      if feature == 'tempo'
+        # Normalize tempo to 0-1 range (assuming most tempo values fall between 60-180 BPM)
+        my_norm = normalize_tempo(my_averages[feature])
+        their_norm = normalize_tempo(their_averages[feature])
+        total_difference += (my_norm - their_norm).abs
+      else
+        # Calculate absolute difference (other features are already 0-1)
+        total_difference += (my_averages[feature] - their_averages[feature]).abs
+      end
+      
+      feature_count += 1
+    end
+    
+    # Avoid division by zero
+    return 0 if feature_count == 0
+    
+    # Convert distance to similarity (0 to 1 scale)
+    1 - (total_difference / feature_count)
+  end
+  
+  def normalize_tempo(tempo)
+    # Normalize tempo to 0-1 range
+    # Most songs are between 60-180 BPM
+    min_tempo = 60
+    max_tempo = 180
+    
+    normalized = (tempo - min_tempo) / (max_tempo - min_tempo)
+    [0, [1, normalized].min].max  # Clamp to 0-1 range
+  end
+  
+  def calculate_feature_averages(features, feature_names)
+    valid_features = features.reject { |f| f.nil? }
+    total_tracks = valid_features.size.to_f
+    return {} if total_tracks.zero?
+    
+    # Sum all features
+    sums = Hash.new(0)
+    count = Hash.new(0)
+    
+    valid_features.each do |track_features|
+      feature_names.each do |feature|
+        if track_features && track_features[feature]
+          sums[feature] += track_features[feature].to_f
+          count[feature] += 1
+        end
+      end
+    end
+    
+    # Calculate averages
+    averages = {}
+    feature_names.each do |feature|
+      averages[feature] = count[feature] > 0 ? sums[feature] / count[feature] : nil
+    end
+    
+    averages
+  end
+  
+  def format_tracks_response(response)
+    return [] unless response && response['items'].is_a?(Array)
+    
+    response['items'].map do |track|
+      {
+        id: track['id'],
+        name: track['name'],
+        artist: track['artists'].first['name'],
+        album: track['album']['name'],
+        album_art_url: track['album']['images'].first['url'],
+        popularity: track['popularity'],
+        preview_url: track['preview_url'],
+        uri: track['uri']
+      }
+    end
+  end
+  
+  def format_artists_response(response)
+    return [] unless response && response['items'].is_a?(Array)
+    
+    response['items'].map do |artist|
+      {
+        id: artist['id'],
+        name: artist['name'],
+        image_url: artist['images'].first&.dig('url'),
+        genres: artist['genres'],
+        popularity: artist['popularity'],
+        uri: artist['uri']
+      }
+    end
+  end
 end

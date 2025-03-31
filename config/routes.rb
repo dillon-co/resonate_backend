@@ -14,7 +14,28 @@ Rails.application.routes.draw do
 
   namespace :api do
     namespace :v1 do
-      resources :users, only: [:index, :create]
+      resources :users, only: [:index, :create, :show] do
+        member do
+          get 'top_tracks', to: 'users#user_top_tracks'
+          get 'top_artists', to: 'users#user_top_artists'
+          get 'compatibility', to: 'users#compatibility'
+        end
+        
+        collection do
+          get 'discover', to: 'users#discover_users'
+        end
+      end
+      
+      resources :friendships, only: [:index, :create, :destroy] do
+        collection do
+          get 'accepted', to: 'friendships#accepted'
+        end
+        
+        member do
+          patch 'accept', to: 'friendships#accept'
+          patch 'reject', to: 'friendships#reject'
+        end
+      end
       
       # Pre-launch signup endpoint
       post '/signups', to: 'signups#create'

@@ -2,6 +2,7 @@ class Api::V1::SignupsController < ApplicationController
   allow_unauthenticated_access only: [:create]
 
   def create
+    
     signup = Signup.new(signup_params)
     
     if signup.save

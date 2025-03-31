@@ -30,19 +30,31 @@ class Sessions::OmniAuthsController < ApplicationController
           # Give the user model the option to update itself with the new information
           Current.user.signed_in_with_oauth(auth)
           
-          # Redirect back to the frontend with success message
-          redirect_to "#{redirect_uri}#success=true&message=Account+linked"
+          # Return response based on format
+          respond_to_oauth_result(
+            success: true,
+            message: "Account linked",
+            redirect_uri: redirect_uri
+          )
         else
           # Identity was found, check relation to current user
           if Current.user == identity.user
             # Update the user's OAuth tokens even if already linked
             Current.user.signed_in_with_oauth(auth)
             
-            # Redirect back to the frontend with success message
-            redirect_to "#{redirect_uri}#success=true&message=Account+already+linked"
+            # Return response based on format
+            respond_to_oauth_result(
+              success: true,
+              message: "Account already linked",
+              redirect_uri: redirect_uri
+            )
           else
             # The identity is not associated with the current_user, illegal state
-            redirect_to "#{redirect_uri}#success=false&error=Account+mismatch"
+            respond_to_oauth_result(
+              success: false,
+              error: "Account mismatch",
+              redirect_uri: redirect_uri
+            )
           end
         end
       else
@@ -70,8 +82,15 @@ class Sessions::OmniAuthsController < ApplicationController
         # Generate a token you can pass to the frontend
         auth_token = generate_auth_token(identity.user)
         
-        # Redirect to the frontend with the token in the URL fragment
-        redirect_to "#{redirect_uri}#auth_token=#{auth_token}&user_id=#{identity.user.id}&user_name=#{identity.user.display_name}&user_profile_photo_url=#{identity.user.profile_photo_url}"
+        # Return response with auth data
+        respond_to_oauth_result(
+          success: true,
+          auth_token: auth_token,
+          user_id: identity.user.id,
+          user_name: identity.user.display_name,
+          user_profile_photo_url: identity.user.profile_photo_url,
+          redirect_uri: redirect_uri
+        )
       end
     end
   
@@ -83,8 +102,12 @@ class Sessions::OmniAuthsController < ApplicationController
                       "https://dillon-co.github.io"
                     end
       
-      # Redirect to the frontend with error message
-      redirect_to "#{redirect_uri}#success=false&error=Authentication+failed"
+      # Return failure response
+      respond_to_oauth_result(
+        success: false,
+        error: "Authentication failed",
+        redirect_uri: redirect_uri
+      )
     end
 
     private
@@ -92,5 +115,82 @@ class Sessions::OmniAuthsController < ApplicationController
     def generate_auth_token(user)
       payload = { user_id: user.id, exp: 24.hours.from_now.to_i }
       JWT.encode(payload, Rails.application.credentials.secret_key_base)
+    end
+    
+    def respond_to_oauth_result(data)
+      # Format the data as JSON
+      json_data = data.to_json
+      
+      # Create a safe JavaScript representation of the data
+      js_data = json_data.html_safe
+      
+      # Return HTML with embedded JavaScript that handles both redirect and API scenarios
+      html = <<~HTML
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Authentication Complete</title>
+          <script>
+            // The authentication data
+            var authData = #{js_data};
+            
+            // Function to handle different client types
+            function handleAuthResult() {
+              // Check if this is a mobile app webview that can receive messages
+              if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.authCallback) {
+                // iOS WebView
+                window.webkit.messageHandlers.authCallback.postMessage(authData);
+                return;
+              }
+              
+              if (window.authCallback) {
+                // Android WebView
+                window.authCallback.receiveAuthData(JSON.stringify(authData));
+                return;
+              }
+              
+              // Check if we're in a popup window opened by the parent
+              if (window.opener && !window.opener.closed) {
+                // We're in a popup, send message to parent and close
+                window.opener.postMessage(authData, "*");
+                window.close();
+                return;
+              }
+              
+              // Regular browser flow - redirect with hash params
+              var redirectUri = authData.redirect_uri || "/";
+              
+              // Build the hash fragment
+              var hashParams = [];
+              Object.keys(authData).forEach(function(key) {
+                if (key !== 'redirect_uri') {
+                  hashParams.push(key + '=' + encodeURIComponent(authData[key]));
+                }
+              });
+              
+              // Redirect with hash params
+              window.location.href = redirectUri + '#' + hashParams.join('&');
+            }
+            
+            // Execute the handler
+            handleAuthResult();
+          </script>
+        </head>
+        <body>
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+                      max-width: 500px; margin: 0 auto; padding: 20px; text-align: center;">
+            <h2 style="color: #333; margin-bottom: 20px;">Authentication Complete</h2>
+            <p style="color: #666; line-height: 1.5;">
+              #{data[:success] ? 'Authentication successful!' : 'Authentication failed: ' + (data[:error] || 'Unknown error')}
+            </p>
+            <p style="color: #666; margin-top: 20px;">
+              You can close this window now. Redirecting you back to the application...
+            </p>
+          </div>
+        </body>
+        </html>
+      HTML
+      
+      render html: html.html_safe
     end
   end

@@ -46,8 +46,8 @@ module Authentication
       # If we have a token, try to decode it as JWT
       if token.present?
         begin
-          # Decode the JWT token
-          decoded_token = JWT.decode(token, Rails.application.credentials.secret_key_base, true, { algorithm: 'HS256' })
+          # Decode the JWT token using the same secret key that was used to encode it
+          decoded_token = JWT.decode(token, Rails.application.secret_key_base, true, { algorithm: 'HS256' })
           user_id = decoded_token.first['user_id']
           
           # Find the user

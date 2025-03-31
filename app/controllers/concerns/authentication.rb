@@ -50,9 +50,18 @@ module Authentication
           decoded_token = JWT.decode(token, Rails.application.credentials.secret_key_base, true, { algorithm: 'HS256' })
           user_id = decoded_token.first['user_id']
           
-          # Find the user and create a session for them
+          # Find the user
           user = User.find_by(id: user_id)
-          return user.sessions.first if user && user.sessions.any?
+          
+          if user
+            # If the user has no sessions, create one
+            if user.sessions.empty?
+              return start_new_session_for(user)
+            else
+              # Otherwise use the first session
+              return user.sessions.first
+            end
+          end
         rescue JWT::DecodeError => e
           Rails.logger.error("JWT decode error: #{e.message}")
           # If JWT decode fails, try to find a session by token (legacy method)

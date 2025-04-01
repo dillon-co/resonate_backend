@@ -77,7 +77,7 @@ class User < ApplicationRecord
     if seed_tracks && !seed_tracks.empty?
       # Log the seed tracks for debugging
       Rails.logger.info("Using seed tracks for recommendations: #{seed_tracks.join(', ')}")
-      
+      seed_tracks = seed_tracks.map { |track| track[:id] }
       # Filter out any obviously invalid IDs
       seed_tracks = seed_tracks.select { |id| id.is_a?(String) && !id.empty? }
       

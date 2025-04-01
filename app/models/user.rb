@@ -231,7 +231,13 @@ class User < ApplicationRecord
     seed_tracks = friends.flat_map do |friend|
       begin
         friend_top = friend.get_top_tracks(limit: 5)
-        friend_top && friend_top['items'] ? friend_top['items'].map { |t| t['id'] } : []
+        if friend_top.is_a?(Array)
+          friend_top.map { |t| t[:id] }
+        elsif friend_top && friend_top['items']
+          friend_top['items'].map { |t| t['id'] }
+        else
+          []
+        end
       rescue => e
         Rails.logger.error("Error fetching friend tracks: #{e.message}")
         []

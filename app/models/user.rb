@@ -76,8 +76,8 @@ class User < ApplicationRecord
     # Validate seed tracks - ensure they're valid Spotify IDs
     if seed_tracks && !seed_tracks.empty?
       # Log the seed tracks for debugging
+      seed_tracks = seed_tracks.map { |track| track[:id] } if seed_tracks.first.is_a?(Hash)
       Rails.logger.info("Using seed tracks for recommendations: #{seed_tracks.join(', ')}")
-      seed_tracks = seed_tracks.map { |track| track[:id] }
       # Filter out any obviously invalid IDs
       seed_tracks = seed_tracks.select { |id| id.is_a?(String) && !id.empty? }
       
@@ -85,17 +85,26 @@ class User < ApplicationRecord
       seed_tracks = seed_tracks.take(5)
     end
     
-    # Build parameters
+    # Build parameters - Spotify expects comma-separated strings for seed values
     params = { limit: limit }
-    params[:seed_artists] = seed_artists.join(',') if seed_artists && !seed_artists.empty?
-    params[:seed_tracks] = seed_tracks.join(',') if seed_tracks && !seed_tracks.empty?
-    params[:seed_genres] = seed_genres.join(',') if seed_genres && !seed_genres.empty?
     
-    # If we have no valid seeds after filtering, return empty
-    # if params.keys.none? { |k| k.to_s.start_with?('seed_') }
-    #   Rails.logger.error("No valid seeds after filtering")
-    #   return { 'tracks' => [] }
-    # end
+    # Add seed parameters if present
+    if seed_artists && !seed_artists.empty?
+      seed_artists = seed_artists.take(5) # Spotify limit
+      params[:seed_artists] = seed_artists.join(',')
+    end
+    
+    if seed_tracks && !seed_tracks.empty?
+      params[:seed_tracks] = seed_tracks.join(',')
+    end
+    
+    if seed_genres && !seed_genres.empty?
+      seed_genres = seed_genres.take(5) # Spotify limit
+      params[:seed_genres] = seed_genres.join(',')
+    end
+    
+    # For debugging
+    Rails.logger.info("Spotify recommendations params: #{params.inspect}")
     
     # Try to get from cache first
     cache_key = "spotify:recommendations:#{params.to_s}"
@@ -106,6 +115,11 @@ class User < ApplicationRecord
     begin
       # The correct endpoint is just 'recommendations' without the v1/ prefix
       response = spotify_api_call("recommendations", params: params)
+      
+      # For debugging
+      if response.blank? || !response['tracks']
+        Rails.logger.error("Empty or invalid response from Spotify recommendations API: #{response.inspect}")
+      end
       
       # Cache successful responses
       Rails.cache.write(cache_key, response, expires_in: 1.day) if response.present? && response['tracks']
@@ -258,7 +272,7 @@ class User < ApplicationRecord
       my_features = get_audio_features(my_track_ids)
       their_features = other_user.get_audio_features(their_track_ids)
       
-      # Compare average features (energy, valence, danceability, etc.)
+      # Calculate distance between feature vectors (normalized)
       feature_similarity = calculate_feature_similarity(my_features, their_features)
     end
     
@@ -524,6 +538,7 @@ class User < ApplicationRecord
     end
     
     url = "https://api.spotify.com/v1/#{endpoint}"
+    Rails.logger.info("Making Spotify API call to: #{url} with params: #{params.inspect}")
     
     response = Faraday.new do |conn|
       conn.request :json
@@ -536,17 +551,21 @@ class User < ApplicationRecord
     end
     
     if response.status == 200
+      Rails.logger.info("Spotify API call successful: #{endpoint}")
       response.body
     elsif response.status == 401
+      Rails.logger.warn("Spotify API unauthorized (401): Attempting token refresh")
       # Force token refresh and retry once
       refresh_success = refresh_spotify_token!
       
       # If token refresh failed, return empty data
       unless refresh_success
+        Rails.logger.error("Spotify token refresh failed")
         return method == :get ? {} : false
       end
       
       # Retry the request with fresh token
+      Rails.logger.info("Retrying Spotify API call with refreshed token")
       response = Faraday.new do |conn|
         conn.request :json
         conn.response :json
@@ -558,16 +577,17 @@ class User < ApplicationRecord
       end
       
       if response.status == 200
+        Rails.logger.info("Spotify API retry successful: #{endpoint}")
         response.body
       else
-        Rails.logger.error("Spotify API error after token refresh: #{response.status} - #{response.body}")
+        Rails.logger.error("Spotify API error after token refresh: #{response.status} - #{response.body.inspect}")
         method == :get ? {} : false
       end
     elsif response.status == 404
-      Rails.logger.error("Spotify API error: #{response.status} - #{response.body}")
+      Rails.logger.error("Spotify API 404 Not Found: #{url} - Response: #{response.body.inspect}")
       method == :get ? {} : false
     else
-      Rails.logger.error("Spotify API error: #{response.status} - #{response.body}")
+      Rails.logger.error("Spotify API error: #{response.status} - URL: #{url} - Response: #{response.body.inspect}")
       method == :get ? {} : false
     end
   end

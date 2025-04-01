@@ -75,8 +75,12 @@ class User < ApplicationRecord
     
     # Validate seed tracks - ensure they're valid Spotify IDs
     if seed_tracks && !seed_tracks.empty?
-      # Log the seed tracks for debugging
-      seed_tracks = seed_tracks.map { |track| track[:id] } if seed_tracks.first.is_a?(Hash)
+      # If we received an array of track objects from get_top_tracks
+      if seed_tracks.first.is_a?(Hash)
+        Rails.logger.info("Converting track objects to IDs")
+        seed_tracks = seed_tracks.map { |track| track[:id] || track['id'] }.compact
+      end
+      
       Rails.logger.info("Using seed tracks for recommendations: #{seed_tracks.join(', ')}")
       # Filter out any obviously invalid IDs
       seed_tracks = seed_tracks.select { |id| id.is_a?(String) && !id.empty? }
@@ -111,14 +115,29 @@ class User < ApplicationRecord
     cached_recommendations = Rails.cache.read(cache_key)
     return cached_recommendations if cached_recommendations.present?
     
-    # Make the API call
+    # Make the API call - try both endpoint formats
     begin
-      # The correct endpoint is just 'recommendations' without the v1/ prefix
-      response = spotify_api_call("recommendations", params: params)
+      # Try the browse/recommendations endpoint first (this is the correct one according to latest Spotify docs)
+      response = spotify_api_call("browse/recommendations", params: params)
+      
+      # If that fails with a 404, try the regular recommendations endpoint
+      if response.blank? || !response['tracks']
+        Rails.logger.warn("First attempt failed, trying alternative endpoint")
+        response = spotify_api_call("recommendations", params: params)
+      end
       
       # For debugging
       if response.blank? || !response['tracks']
         Rails.logger.error("Empty or invalid response from Spotify recommendations API: #{response.inspect}")
+        
+        # Try a fallback with just one seed track as a last resort
+        if seed_tracks && seed_tracks.length > 1
+          Rails.logger.info("Trying with just one seed track as fallback")
+          single_seed_params = { limit: limit, seed_tracks: seed_tracks.first }
+          response = spotify_api_call("browse/recommendations", params: single_seed_params)
+        end
+      else
+        Rails.logger.info("Successfully got recommendations with #{response['tracks'].size} tracks")
       end
       
       # Cache successful responses

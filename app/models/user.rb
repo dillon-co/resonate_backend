@@ -91,6 +91,12 @@ class User < ApplicationRecord
     params[:seed_tracks] = seed_tracks.join(',') if seed_tracks && !seed_tracks.empty?
     params[:seed_genres] = seed_genres.join(',') if seed_genres && !seed_genres.empty?
     
+    # If we have no valid seeds after filtering, return empty
+    if params.keys.none? { |k| k.to_s.start_with?('seed_') }
+      Rails.logger.error("No valid seeds after filtering")
+      return { 'tracks' => [] }
+    end
+    
     # Try to get from cache first
     cache_key = "spotify:recommendations:#{params.to_s}"
     cached_recommendations = Rails.cache.read(cache_key)
@@ -98,6 +104,7 @@ class User < ApplicationRecord
     
     # Make the API call
     begin
+      # The correct endpoint is just 'recommendations' without the v1/ prefix
       response = spotify_api_call("recommendations", params: params)
       
       # Cache successful responses

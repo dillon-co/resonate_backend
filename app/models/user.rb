@@ -269,50 +269,82 @@ class User < ApplicationRecord
     cached_recommendations = Rails.cache.read(cache_key)
     return cached_recommendations if cached_recommendations.present?
 
-    # Get seed tracks from friends' top tracks
-    seed_tracks = friends.flat_map do |friend|
-      begin
-        # Try to get from friend's cache first
-        friend_cache_key = "user:#{friend.id}:top_tracks:medium_term"
-        friend_top = Rails.cache.read(friend_cache_key)
-        
-        # If not in cache, fetch directly
-        if friend_top.blank?
-          friend_top = friend.get_top_tracks(limit: 5)
-          # Cache the result if successful
-          Rails.cache.write(friend_cache_key, friend_top, expires_in: 1.day) if friend_top.present?
-        end
-        
-        # Check if friend_top is an array (the expected format) or a hash with 'items' key
-        if friend_top.is_a?(Array)
-          friend_top.map { |t| t[:id] }
-        elsif friend_top && friend_top['items']
-          friend_top['items'].map { |t| t['id'] }
-        else
+    # If we have no friends, return empty array
+    return [] if friends.empty?
+
+    # Try to get recommendations from friends' top tracks
+    begin
+      # Get seed tracks from friends' top tracks
+      seed_tracks = friends.flat_map do |friend|
+        begin
+          # Try to get from friend's cache first
+          friend_cache_key = "user:#{friend.id}:top_tracks:medium_term"
+          friend_top = Rails.cache.read(friend_cache_key)
+          
+          # If not in cache, fetch directly
+          if friend_top.blank?
+            friend_top = friend.get_top_tracks(limit: 5)
+            # Cache the result if successful
+            Rails.cache.write(friend_cache_key, friend_top, expires_in: 1.day) if friend_top.present?
+          end
+          
+          # Check if friend_top is an array (the expected format) or a hash with 'items' key
+          if friend_top.is_a?(Array)
+            friend_top.map { |t| t[:id] }
+          elsif friend_top && friend_top['items']
+            friend_top['items'].map { |t| t['id'] }
+          else
+            []
+          end
+        rescue => e
+          Rails.logger.error("Error fetching friend tracks: #{e.message}")
           []
         end
-      rescue => e
-        Rails.logger.error("Error fetching friend tracks: #{e.message}")
-        []
       end
-    end
-    
-    # Ensure we have at most 5 seed tracks (Spotify API limit)
-    seed_tracks = seed_tracks.sample([5, seed_tracks.size].min)
-    
-    # Get recommendations
-    return [] if seed_tracks.empty?
-    
-    begin
-      recommendations = get_recommendations(seed_tracks: seed_tracks, limit: limit)
-      result = recommendations && recommendations['tracks'] ? recommendations['tracks'] : []
       
-      # Cache the result for future requests
+      # Ensure we have at most 5 seed tracks (Spotify API limit)
+      seed_tracks = seed_tracks.sample([5, seed_tracks.size].min)
+      
+      # Get recommendations if we have seed tracks
+      if seed_tracks.present?
+        begin
+          recommendations = get_recommendations(seed_tracks: seed_tracks, limit: limit)
+          result = recommendations && recommendations['tracks'] ? recommendations['tracks'] : []
+          
+          # If we got recommendations, cache and return them
+          if result.present?
+            Rails.cache.write(cache_key, result, expires_in: 1.day)
+            return result
+          end
+        rescue => e
+          Rails.logger.error("Error getting recommendations: #{e.message}")
+          # Continue to fallback
+        end
+      end
+      
+      # FALLBACK: If we couldn't get recommendations or there were no seed tracks,
+      # just return a sample of friends' top tracks directly
+      Rails.logger.info("Using fallback for recommendations: returning friends' top tracks")
+      
+      all_friend_tracks = friends.flat_map do |friend|
+        begin
+          tracks = friend.get_top_tracks(limit: 10)
+          tracks.is_a?(Array) ? tracks : (tracks && tracks['items'] ? tracks['items'] : [])
+        rescue => e
+          Rails.logger.error("Error in fallback getting friend tracks: #{e.message}")
+          []
+        end
+      end
+      
+      # Shuffle and take the requested number
+      result = all_friend_tracks.shuffle.take(limit)
+      
+      # Cache the result
       Rails.cache.write(cache_key, result, expires_in: 1.day) if result.present?
       
       result
     rescue => e
-      Rails.logger.error("Error getting music recommendations: #{e.message}")
+      Rails.logger.error("Error in friend_based_recommendations: #{e.message}")
       []
     end
   end

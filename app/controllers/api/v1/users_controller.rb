@@ -73,17 +73,50 @@ class Api::V1::UsersController < ApplicationController
     
     # Format the response
     formatted_recommendations = recommendations.map do |track|
-      {
-        id: track['id'],
-        name: track['name'],
-        artist: track['artists'].first['name'],
-        album: track['album']['name'],
-        album_art_url: track['album']['images'].first['url'],
-        popularity: track['popularity'],
-        preview_url: track['preview_url'],
-        uri: track['uri']
-      }
-    end
+      # Handle different track formats
+      if track.is_a?(Hash) && track[:id].present?
+        # Handle format from our fallback mechanism (symbol keys)
+        {
+          id: track[:id],
+          name: track[:name],
+          artist: track[:artist],
+          album: track[:album] || "Unknown Album",
+          album_art_url: track[:album_art_url] || track[:image_url] || "https://via.placeholder.com/300",
+          popularity: track[:popularity] || 0,
+          preview_url: track[:preview_url],
+          uri: track[:uri] || "spotify:track:#{track[:id]}"
+        }
+      elsif track.is_a?(Hash) && track['id'].present?
+        # Handle format from Spotify API (string keys)
+        artist_name = if track['artists'] && track['artists'].first
+                        track['artists'].first['name']
+                      else
+                        "Unknown Artist"
+                      end
+                      
+        album_name = track['album'] ? track['album']['name'] : "Unknown Album"
+        
+        album_art = if track['album'] && track['album']['images'] && track['album']['images'].first
+                      track['album']['images'].first['url']
+                    else
+                      "https://via.placeholder.com/300"
+                    end
+        
+        {
+          id: track['id'],
+          name: track['name'],
+          artist: artist_name,
+          album: album_name,
+          album_art_url: album_art,
+          popularity: track['popularity'] || 0,
+          preview_url: track['preview_url'],
+          uri: track['uri'] || "spotify:track:#{track['id']}"
+        }
+      else
+        # Skip invalid tracks
+        nil
+      end
+    end.compact # Remove any nil entries
     
     render json: formatted_recommendations
   end

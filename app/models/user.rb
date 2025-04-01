@@ -65,12 +65,49 @@ class User < ApplicationRecord
   end
   
   def get_recommendations(seed_artists: nil, seed_tracks: nil, seed_genres: nil, limit: 20)
+    # We need at least one seed type
+    if (seed_artists.nil? || seed_artists.empty?) && 
+       (seed_tracks.nil? || seed_tracks.empty?) && 
+       (seed_genres.nil? || seed_genres.empty?)
+      Rails.logger.error("No seeds provided for recommendations")
+      return { 'tracks' => [] }
+    end
+    
+    # Validate seed tracks - ensure they're valid Spotify IDs
+    if seed_tracks && !seed_tracks.empty?
+      # Log the seed tracks for debugging
+      Rails.logger.info("Using seed tracks for recommendations: #{seed_tracks.join(', ')}")
+      
+      # Filter out any obviously invalid IDs
+      seed_tracks = seed_tracks.select { |id| id.is_a?(String) && !id.empty? }
+      
+      # Ensure we don't exceed Spotify's limit of 5 seed values total
+      seed_tracks = seed_tracks.take(5)
+    end
+    
+    # Build parameters
     params = { limit: limit }
     params[:seed_artists] = seed_artists.join(',') if seed_artists && !seed_artists.empty?
     params[:seed_tracks] = seed_tracks.join(',') if seed_tracks && !seed_tracks.empty?
     params[:seed_genres] = seed_genres.join(',') if seed_genres && !seed_genres.empty?
     
-    spotify_api_call("recommendations", params: params)
+    # Try to get from cache first
+    cache_key = "spotify:recommendations:#{params.to_s}"
+    cached_recommendations = Rails.cache.read(cache_key)
+    return cached_recommendations if cached_recommendations.present?
+    
+    # Make the API call
+    begin
+      response = spotify_api_call("recommendations", params: params)
+      
+      # Cache successful responses
+      Rails.cache.write(cache_key, response, expires_in: 1.day) if response.present? && response['tracks']
+      
+      response
+    rescue => e
+      Rails.logger.error("Error getting recommendations: #{e.message}")
+      { 'tracks' => [] }
+    end
   end
   
   def get_audio_features(track_ids)

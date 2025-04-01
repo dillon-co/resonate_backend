@@ -168,15 +168,22 @@ class User < ApplicationRecord
   def musical_compatibility_with(other_user, depth: :medium)
     time_range = time_range_for_depth(depth)
     
-    # Get both users' top artists
-    my_artists_response = get_top_artists(time_range: time_range)
-    their_artists_response = other_user.get_top_artists(time_range: time_range)
+    # Get cached data or fetch if not available
+    my_artists = Rails.cache.fetch("user:#{id}:top_artists:#{time_range}", expires_in: 1.day) do
+      get_top_artists(time_range: time_range)
+    end
     
-    my_artists = my_artists_response && my_artists_response['items'] ? my_artists_response['items'] : []
-    their_artists = their_artists_response && their_artists_response['items'] ? their_artists_response['items'] : []
+    their_artists = Rails.cache.fetch("user:#{other_user.id}:top_artists:#{time_range}", expires_in: 1.day) do
+      other_user.get_top_artists(time_range: time_range)
+    end
     
-    my_artist_ids = my_artists.map { |a| a['id'] }
-    their_artist_ids = their_artists.map { |a| a['id'] }
+    # Ensure we have arrays
+    my_artists = my_artists.is_a?(Array) ? my_artists : []
+    their_artists = their_artists.is_a?(Array) ? their_artists : []
+    
+    # Extract IDs - the formatted response has id as a key, not 'id'
+    my_artist_ids = my_artists.map { |a| a[:id] }
+    their_artist_ids = their_artists.map { |a| a[:id] }
     
     # Calculate overlap
     common_artists = my_artist_ids & their_artist_ids
@@ -186,17 +193,23 @@ class User < ApplicationRecord
     artist_similarity = total_artists.empty? ? 0 : (common_artists.size.to_f / total_artists.size)
     
     # Get audio features for both users' top tracks to compare musical preferences
-    my_tracks_response = get_top_tracks(time_range: time_range)
-    their_tracks_response = other_user.get_top_tracks(time_range: time_range)
+    my_tracks = Rails.cache.fetch("user:#{id}:top_tracks:#{time_range}", expires_in: 1.day) do
+      get_top_tracks(time_range: time_range)
+    end
     
-    my_tracks = my_tracks_response && my_tracks_response['items'] ? my_tracks_response['items'] : []
-    their_tracks = their_tracks_response && their_tracks_response['items'] ? their_tracks_response['items'] : []
+    their_tracks = Rails.cache.fetch("user:#{other_user.id}:top_tracks:#{time_range}", expires_in: 1.day) do
+      other_user.get_top_tracks(time_range: time_range)
+    end
+    
+    # Ensure we have arrays
+    my_tracks = my_tracks.is_a?(Array) ? my_tracks : []
+    their_tracks = their_tracks.is_a?(Array) ? their_tracks : []
     
     # Compare audio features if there are tracks
     feature_similarity = 0
     if !my_tracks.empty? && !their_tracks.empty?
-      my_track_ids = my_tracks.map { |t| t['id'] }
-      their_track_ids = their_tracks.map { |t| t['id'] }
+      my_track_ids = my_tracks.map { |t| t[:id] }
+      their_track_ids = their_tracks.map { |t| t[:id] }
       
       my_features = get_audio_features(my_track_ids)
       their_features = other_user.get_audio_features(their_track_ids)

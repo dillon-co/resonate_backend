@@ -32,7 +32,7 @@ end
 
 Rails.application.config.middleware.use OmniAuth::Builder do
   provider :spotify, ENV['SPOTIFY_CLIENT_ID'], ENV['SPOTIFY_CLIENT_SECRET'], 
-    scope: 'user-read-email user-read-private user-library-modify user-library-read user-top-read user-read-recently-played user-follow-read user-follow-modify user-read-playback-state user-modify-playback-state user-read-currently-playing app-remote-control streaming playlist-read-private playlist-read-collaborative playlist-modify-public playlist-modify-private',
+    scope: 'user-read-email user-read-private user-library-modify user-library-read user-top-read user-read-recently-played user-follow-read user-follow-modify user-read-playback-state user-modify-playback-state user-read-currently-playing app-remote-control streaming playlist-read-private playlist-read-collaborative playlist-modify-public playlist-modify-private user-read-playback-position',
     callback_url: ENV['SPOTIFY_CALLBACK_URL']
 end
 

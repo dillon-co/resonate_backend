@@ -227,10 +227,26 @@ class User < ApplicationRecord
   
   # Generate recommendations based on friends' listening habits
   def friend_based_recommendations(limit: 20)
+    # Try to get from cache first
+    cache_key = "user:#{id}:friend_recommendations:#{limit}"
+    cached_recommendations = Rails.cache.read(cache_key)
+    return cached_recommendations if cached_recommendations.present?
+
     # Get seed tracks from friends' top tracks
     seed_tracks = friends.flat_map do |friend|
       begin
-        friend_top = friend.get_top_tracks(limit: 5)
+        # Try to get from friend's cache first
+        friend_cache_key = "user:#{friend.id}:top_tracks:medium_term"
+        friend_top = Rails.cache.read(friend_cache_key)
+        
+        # If not in cache, fetch directly
+        if friend_top.blank?
+          friend_top = friend.get_top_tracks(limit: 5)
+          # Cache the result if successful
+          Rails.cache.write(friend_cache_key, friend_top, expires_in: 1.day) if friend_top.present?
+        end
+        
+        # Check if friend_top is an array (the expected format) or a hash with 'items' key
         if friend_top.is_a?(Array)
           friend_top.map { |t| t[:id] }
         elsif friend_top && friend_top['items']
@@ -250,8 +266,18 @@ class User < ApplicationRecord
     # Get recommendations
     return [] if seed_tracks.empty?
     
-    recommendations = get_recommendations(seed_tracks: seed_tracks, limit: limit)
-    recommendations && recommendations['tracks'] ? recommendations['tracks'] : []
+    begin
+      recommendations = get_recommendations(seed_tracks: seed_tracks, limit: limit)
+      result = recommendations && recommendations['tracks'] ? recommendations['tracks'] : []
+      
+      # Cache the result for future requests
+      Rails.cache.write(cache_key, result, expires_in: 1.day) if result.present?
+      
+      result
+    rescue => e
+      Rails.logger.error("Error getting music recommendations: #{e.message}")
+      []
+    end
   end
   
   # Get genre breakdown of user's music taste
@@ -461,6 +487,9 @@ class User < ApplicationRecord
         Rails.logger.error("Spotify API error after token refresh: #{response.status} - #{response.body}")
         method == :get ? {} : false
       end
+    elsif response.status == 404
+      Rails.logger.error("Spotify API error: #{response.status} - #{response.body}")
+      method == :get ? {} : false
     else
       Rails.logger.error("Spotify API error: #{response.status} - #{response.body}")
       method == :get ? {} : false

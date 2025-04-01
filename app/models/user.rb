@@ -92,10 +92,10 @@ class User < ApplicationRecord
     params[:seed_genres] = seed_genres.join(',') if seed_genres && !seed_genres.empty?
     
     # If we have no valid seeds after filtering, return empty
-    if params.keys.none? { |k| k.to_s.start_with?('seed_') }
-      Rails.logger.error("No valid seeds after filtering")
-      return { 'tracks' => [] }
-    end
+    # if params.keys.none? { |k| k.to_s.start_with?('seed_') }
+    #   Rails.logger.error("No valid seeds after filtering")
+    #   return { 'tracks' => [] }
+    # end
     
     # Try to get from cache first
     cache_key = "spotify:recommendations:#{params.to_s}"

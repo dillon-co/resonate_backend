@@ -253,7 +253,7 @@ class User < ApplicationRecord
   end
   
   # Find musical compatibility score with another user
-  def musical_compatibility_with(other_user, depth: :short)
+  def musical_compatibility_with(other_user, depth: :shallow)
     time_range = time_range_for_depth(depth)
     
     # Get cached data or fetch if not available

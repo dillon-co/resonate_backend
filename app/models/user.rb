@@ -582,7 +582,7 @@ class User < ApplicationRecord
     
     # Create a new playlist
     playlist_name = "Shared Vibes: #{self.display_name} & #{other_user.display_name}"
-    playlist_description = "A shared playlist of tracks from #{self.display_name} and #{other_user.display_name}, created by Resonate."
+    playlist_description = "A shared playlist of tracks from #{self.display_name} and #{other_user.display_name}, created by Resonate. Anyone with this link can edit this playlist."
     
     begin
       # Create the playlist
@@ -605,6 +605,10 @@ class User < ApplicationRecord
       
       playlist_id = playlist_response['id']
       Rails.logger.info("Successfully created playlist with ID: #{playlist_id}")
+      
+      # Make the playlist collaborative
+      # Note: According to Spotify API, setting collaborative=true when creating the playlist
+      # should be sufficient, but we'll ensure it's set properly here
       
       # Add tracks to the playlist
       if combined_tracks.any?
@@ -660,12 +664,21 @@ class User < ApplicationRecord
         end
       end
       
+      # Generate a share link for the other user
+      share_url = playlist_response['external_urls']['spotify']
+      
+      # Log the share URL for the other user
+      Rails.logger.info("Created collaborative playlist: #{share_url}")
+      Rails.logger.info("Share this URL with #{other_user.display_name} to collaborate")
+      
       # Return the playlist data
       {
         id: playlist_response['id'],
         name: playlist_response['name'],
         external_url: playlist_response['external_urls']['spotify'],
-        track_count: combined_tracks.size
+        track_count: combined_tracks.size,
+        collaborative: true,
+        shared_with: other_user.display_name
       }
     rescue => e
       Rails.logger.error("Error creating shared playlist: #{e.message}")

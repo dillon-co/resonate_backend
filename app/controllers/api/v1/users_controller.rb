@@ -29,10 +29,12 @@ class Api::V1::UsersController < ApplicationController
     user = Current.user
     Rails.logger.info("UsersController#current_with_role called for user #{user.id} with role #{user.role}")
     
+    # Explicitly return user with role and avoid using user_with_compatibility
     render json: {
       id: user.id,
       display_name: user.display_name,
-      role: user.role
+      role: user.role,
+      email_address: user.email_address
     }
   rescue => e
     Rails.logger.error("Error in current_with_role: #{e.message}")

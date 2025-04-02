@@ -14,6 +14,9 @@ Rails.application.routes.draw do
 
   namespace :api do
     namespace :v1 do
+      # User role endpoint - must be defined before resources :users to take precedence
+      get '/users/current_with_role', to: 'users#current_with_role'
+      
       resources :users, only: [:index, :create, :show] do
         member do
           get 'top_tracks', to: 'users#user_top_tracks'
@@ -48,9 +51,6 @@ Rails.application.routes.draw do
       # Admin routes
       get '/admin/users', to: 'admin#users'
       patch '/admin/users/:id/update_role', to: 'admin#update_user_role'
-      
-      # User role endpoint
-      get '/users/current_with_role', to: 'users#current_with_role'
     end
   end
 end

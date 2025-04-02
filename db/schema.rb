@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2025_03_20_230917) do
+ActiveRecord::Schema[8.0].define(version: 2025_04_02_150201) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -61,6 +61,7 @@ ActiveRecord::Schema[8.0].define(version: 2025_03_20_230917) do
     t.string "spotify_access_token"
     t.string "spotify_refresh_token"
     t.datetime "spotify_token_expires_at"
+    t.integer "role", default: 0
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
   end
 

@@ -9,6 +9,7 @@ class User < ApplicationRecord
   has_many :received_friendships, class_name: 'Friendship', foreign_key: 'friend_id'
   has_many :received_friends, through: :received_friendships, source: :user
 
+  enum role: [ :user, :admin ]
   # OAuth methods
   def self.create_from_oauth(auth)
     email = auth.info['email']
@@ -41,13 +42,13 @@ class User < ApplicationRecord
   # Spotify API Methods
   #-----------------------
   
-  def get_top_tracks(time_range: 'medium_term', limit: 50)
+  def get_top_tracks(time_range: 'short_term', limit: 50)
     # time_range options: short_term (4 weeks), medium_term (6 months), long_term (years)
     response = spotify_api_call("me/top/tracks", params: { time_range: time_range, limit: limit })
     format_tracks_response(response)
   end
   
-  def get_top_artists(time_range: 'medium_term', limit: 50)
+  def get_top_artists(time_range: 'short_term', limit: 50)
     response = spotify_api_call("me/top/artists", params: { time_range: time_range, limit: limit })
     format_artists_response(response)
   end
@@ -652,7 +653,7 @@ class User < ApplicationRecord
     when :shallow then 'short_term'  # Recent 4 weeks
     when :medium then 'medium_term'  # Last 6 months (default)
     when :deep then 'long_term'      # Several years
-    else 'medium_term'
+    else 'short_term'
     end
   end
   

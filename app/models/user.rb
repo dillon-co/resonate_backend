@@ -337,7 +337,7 @@ class User < ApplicationRecord
       all_friend_tracks = friends.flat_map do |friend|
         begin
           # Try to get from friend's cache first
-          friend_cache_key = "user:#{friend.id}:top_tracks:medium_term"
+          friend_cache_key = "user:#{friend.id}:top_tracks:short_term"
           friend_top = Rails.cache.read(friend_cache_key)
           
           # If not in cache, fetch directly
@@ -542,7 +542,7 @@ class User < ApplicationRecord
   
   # Create a shared playlist with another user
   def create_shared_playlist_with(other_user)
-    return nil unless spotify_connected? && other_user.spotify_connected?
+    # return nil unless spotify_connected? && other_user.spotify_connected?
     return nil unless is_friend_with?(other_user)
     
     # Get top tracks from both users
@@ -606,8 +606,8 @@ class User < ApplicationRecord
     # This method can be called by a background job to periodically
     # fetch and store music data for faster access
     
-    Rails.cache.write("user:#{id}:top_tracks:medium_term", get_top_tracks, expires_in: 1.day)
-    Rails.cache.write("user:#{id}:top_artists:medium_term", get_top_artists, expires_in: 1.day)
+    Rails.cache.write("user:#{id}:top_tracks:short_term", get_top_tracks, expires_in: 1.day)
+    Rails.cache.write("user:#{id}:top_artists:short_term", get_top_artists, expires_in: 1.day)
     Rails.cache.write("user:#{id}:genre_breakdown", genre_breakdown, expires_in: 1.day)
     
     # More caching as needed

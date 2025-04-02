@@ -587,20 +587,22 @@ class User < ApplicationRecord
       )
       
       return nil unless playlist_response && playlist_response['id']
-      
+      puts "\n\n"
+      puts playlist_response
+      puts "\n\n"
       # Add tracks to the playlist
       if combined_tracks.any?
         # Add tracks in smaller batches (Spotify API limits)
       
-          add_tracks_response = spotify_api_call(
-            "playlists/#{playlist_response['id']}/tracks",
-            method: :post,
-            body: {
-              uris: combined_tracks
-            }
-          )
-          
-          Rails.logger.info("Add tracks batch response: #{add_tracks_response.inspect}")
+        add_tracks_response = spotify_api_call(
+          "playlists/#{playlist_response['id']}/tracks",
+          method: :post,
+          body: {
+            uris: combined_tracks
+          }
+        )
+        
+        Rails.logger.info("Add tracks batch response: #{add_tracks_response.inspect}")
           
           # Add a small delay between batch requests
           sleep(0.5)

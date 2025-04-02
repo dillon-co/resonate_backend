@@ -25,6 +25,15 @@ class Api::V1::UsersController < ApplicationController
     render json: user_with_compatibility(user)
   end
 
+  def current_with_role
+    user = Current.user
+    render json: {
+      id: user.id,
+      display_name: user.display_name,
+      role: user.role
+    }
+  end
+
   def show_profile
     user = User.find_by(id: params[:id])
     

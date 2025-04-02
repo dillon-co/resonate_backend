@@ -44,6 +44,13 @@ Rails.application.routes.draw do
       
       # Playlists
       post '/playlists/shared/:user_id', to: 'playlists#create_shared'
+      
+      # Admin routes
+      get '/admin/users', to: 'admin#users'
+      patch '/admin/users/:id/update_role', to: 'admin#update_user_role'
+      
+      # User role endpoint
+      get '/users/current_with_role', to: 'users#current_with_role'
     end
   end
 end

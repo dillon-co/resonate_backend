@@ -542,7 +542,7 @@ class User < ApplicationRecord
   
   # Create a shared playlist with another user
   def create_shared_playlist_with(other_user)
-    return nil unless spotify_connected? && other_user.spotify_connected?
+    # return nil unless spotify_connected? && other_user.spotify_connected?
     return nil unless is_friend_with?(other_user)
     
     # Get top tracks from both users

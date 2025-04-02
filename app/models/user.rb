@@ -542,19 +542,24 @@ class User < ApplicationRecord
   
   # Create a shared playlist with another user
   def create_shared_playlist_with(other_user)
-    # return nil unless spotify_connected? && other_user.spotify_connected?
+    return nil unless spotify_connected? && other_user.spotify_connected?
     return nil unless is_friend_with?(other_user)
     
     # Get top tracks from both users
     my_tracks = get_top_tracks(limit: 25)
     other_tracks = other_user.get_top_tracks(limit: 25)
     
-    # Extract track IDs
-    my_track_ids = my_tracks && my_tracks['items'] ? my_tracks['items'].map { |t| t['uri'] } : []
-    other_track_ids = other_tracks && other_tracks['items'] ? other_tracks['items'].map { |t| t['uri'] } : []
+    # Extract track URIs
+    # The get_top_tracks method now returns an array of formatted track objects
+    my_track_uris = my_tracks.is_a?(Array) ? my_tracks.map { |t| t[:uri] || t['uri'] } : []
+    other_track_uris = other_tracks.is_a?(Array) ? other_tracks.map { |t| t[:uri] || t['uri'] } : []
+    
+    # Log for debugging
+    Rails.logger.info("My track URIs (#{my_track_uris.size}): #{my_track_uris.inspect}")
+    Rails.logger.info("Other user's track URIs (#{other_track_uris.size}): #{other_track_uris.inspect}")
     
     # Combine and shuffle tracks
-    combined_tracks = (my_track_ids + other_track_ids).uniq.shuffle.take(50)
+    combined_tracks = (my_track_uris + other_track_uris).uniq.shuffle.take(50)
     
     return nil if combined_tracks.empty?
     

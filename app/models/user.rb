@@ -596,7 +596,7 @@ class User < ApplicationRecord
             "playlists/#{playlist_response['id']}/tracks",
             method: :post,
             body: {
-              uris: track_batch
+              uris: track_batch.join(',')
             }
           )
           

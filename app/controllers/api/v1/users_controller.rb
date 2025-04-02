@@ -25,6 +25,42 @@ class Api::V1::UsersController < ApplicationController
     render json: user_with_compatibility(user)
   end
 
+  def show_profile
+    user = User.find_by(id: params[:id])
+    
+    if user
+      # Include compatibility data if viewing another user's profile
+      profile_data = if user.id != Current.user.id
+                       user_with_compatibility(user)
+                     else
+                       # If viewing own profile, no need to calculate compatibility
+                       {
+                         id: user.id,
+                         display_name: user.display_name,
+                         profile_photo_url: user.profile_photo_url
+                       }
+                     end
+      
+      # Add Spotify data if the user has connected their account
+      if user.spotify_access_token.present?
+        # Only include limited music data for other users' profiles
+        # We don't want to expose full listening history
+        top_tracks = user.get_top_tracks(limit: 10) rescue []
+        top_artists = user.get_top_artists(limit: 10) rescue []
+        
+        profile_data[:spotify_connected] = true
+        profile_data[:top_tracks] = top_tracks
+        profile_data[:top_artists] = top_artists
+      else
+        profile_data[:spotify_connected] = false
+      end
+      
+      render json: profile_data
+    else
+      render json: { error: "User not found" }, status: :not_found
+    end
+  end
+
   def user_top_tracks
     user = Current.user
     top_tracks = user.get_top_tracks

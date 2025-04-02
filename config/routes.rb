@@ -19,6 +19,7 @@ Rails.application.routes.draw do
           get 'top_tracks', to: 'users#user_top_tracks'
           get 'top_artists', to: 'users#user_top_artists'
           get 'compatibility', to: 'users#compatibility'
+          get 'profile', to: 'users#show_profile'
         end
         
         collection do

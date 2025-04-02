@@ -544,6 +544,17 @@ class User < ApplicationRecord
   def create_shared_playlist_with(other_user)
     return nil unless is_friend_with?(other_user)
     
+    # Verify both users have Spotify connected
+    unless spotify_access_token.present?
+      Rails.logger.error("Cannot create shared playlist: Current user has no Spotify access token")
+      return nil
+    end
+    
+    unless other_user.spotify_access_token.present?
+      Rails.logger.error("Cannot create shared playlist: Other user has no Spotify access token")
+      return nil
+    end
+    
     # Get top tracks from both users
     my_tracks = get_top_tracks(limit: 25)
     other_tracks = other_user.get_top_tracks(limit: 25)
@@ -586,26 +597,67 @@ class User < ApplicationRecord
         }
       )
       
-      puts "\n\n"
-      puts playlist_response
-      puts "\n\n"
-      return nil unless playlist_response && playlist_response['id']
+      # Check if playlist creation was successful
+      if !playlist_response || !playlist_response['id']
+        Rails.logger.error("Failed to create playlist: #{playlist_response.inspect}")
+        return nil
+      end
+      
+      playlist_id = playlist_response['id']
+      Rails.logger.info("Successfully created playlist with ID: #{playlist_id}")
+      
       # Add tracks to the playlist
       if combined_tracks.any?
         # Add tracks in smaller batches (Spotify API limits)
-      
+        success = false
+        
+        # First try adding all tracks at once
         add_tracks_response = spotify_api_call(
-          "playlists/#{playlist_response['id']}/tracks",
+          "playlists/#{playlist_id}/tracks",
           method: :post,
           body: {
             uris: combined_tracks
           }
         )
         
-        Rails.logger.info("Add tracks batch response: #{add_tracks_response.inspect}")
+        if add_tracks_response && (add_tracks_response['snapshot_id'] || add_tracks_response['uri'])
+          success = true
+          Rails.logger.info("Successfully added all tracks at once: #{add_tracks_response.inspect}")
+        else
+          # If adding all at once fails, try adding in batches
+          Rails.logger.warn("Failed to add all tracks at once, trying batches")
+          success = true # Reset and assume success unless a batch fails
           
-          # Add a small delay between batch requests
-          sleep(0.5)
+          combined_tracks.each_slice(10) do |track_batch|
+            batch_response = spotify_api_call(
+              "playlists/#{playlist_id}/tracks",
+              method: :post,
+              body: {
+                uris: track_batch
+              }
+            )
+            
+            if !batch_response || (!batch_response['snapshot_id'] && !batch_response['uri'])
+              Rails.logger.error("Failed to add track batch: #{batch_response.inspect}")
+              success = false
+              break
+            end
+            
+            # Add a small delay between batch requests
+            sleep(0.5)
+          end
+        end
+        
+        if !success
+          Rails.logger.error("Failed to add tracks to playlist")
+          return {
+            id: playlist_id,
+            name: playlist_response['name'],
+            external_url: playlist_response['external_urls']['spotify'],
+            track_count: 0,
+            error: "Created playlist but failed to add tracks"
+          }
+        end
       end
       
       # Return the playlist data
@@ -636,15 +688,12 @@ class User < ApplicationRecord
   private
   
   def spotify_api_call(endpoint, method: :get, params: {}, body: nil)
-    # Try to refresh token if expired
-    refresh_success = refresh_token_if_expired
+    # Ensure token is fresh
+    refresh_token_if_expired
     
-    # If token refresh failed and we don't have a valid token, return empty data
-    if !refresh_success && spotify_token_expired?
-      return method == :get ? {} : false
-    end
-    
+    # Build the full URL
     url = "https://api.spotify.com/v1/#{endpoint}"
+    
     Rails.logger.info("Making Spotify API call to: #{url} with params: #{params.inspect}")
     
     response = Faraday.new do |conn|
@@ -657,8 +706,9 @@ class User < ApplicationRecord
       req.body = body if body.present?
     end
     
-    if response.status == 200
-      Rails.logger.info("Spotify API call successful: #{endpoint}")
+    # Handle successful responses (200 OK or 201 Created)
+    if response.status == 200 || response.status == 201
+      Rails.logger.info("Spotify API call successful: #{endpoint} with status #{response.status}")
       response.body
     elsif response.status == 401
       Rails.logger.warn("Spotify API unauthorized (401): Attempting token refresh")
@@ -683,8 +733,9 @@ class User < ApplicationRecord
         req.body = body if body.present?
       end
       
-      if response.status == 200
-        Rails.logger.info("Spotify API retry successful: #{endpoint}")
+      # Check for success on retry (200 OK or 201 Created)
+      if response.status == 200 || response.status == 201
+        Rails.logger.info("Spotify API retry successful: #{endpoint} with status #{response.status}")
         response.body
       else
         Rails.logger.error("Spotify API error after token refresh: #{response.status} - #{response.body.inspect}")

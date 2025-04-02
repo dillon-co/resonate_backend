@@ -586,10 +586,10 @@ class User < ApplicationRecord
         }
       )
       
-      return nil unless playlist_response && playlist_response['id']
       puts "\n\n"
       puts playlist_response
       puts "\n\n"
+      return nil unless playlist_response && playlist_response['id']
       # Add tracks to the playlist
       if combined_tracks.any?
         # Add tracks in smaller batches (Spotify API limits)

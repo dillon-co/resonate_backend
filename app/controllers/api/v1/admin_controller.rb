@@ -3,6 +3,7 @@ class Api::V1::AdminController < ApplicationController
   before_action :require_admin
   
   def users
+    Rails.logger.info("Admin#users called by user #{Current.user.id} with role #{Current.user.role}")
     users = User.all.order(created_at: :desc)
     
     render json: users.map { |user| 
@@ -19,6 +20,7 @@ class Api::V1::AdminController < ApplicationController
   end
   
   def update_user_role
+    Rails.logger.info("Admin#update_user_role called by user #{Current.user.id} with role #{Current.user.role}")
     user = User.find(params[:id])
     
     if user.update(role: params[:role])
@@ -31,7 +33,10 @@ class Api::V1::AdminController < ApplicationController
   private
   
   def require_admin
+    Rails.logger.info("Checking admin role for user #{Current.user.id}: role=#{Current.user.role}, admin?=#{Current.user.admin?}")
+    
     unless Current.user&.admin?
+      Rails.logger.warn("Unauthorized admin access attempt by user #{Current.user.id} with role #{Current.user.role}")
       render json: { error: "Unauthorized. Admin access required." }, status: :unauthorized
     end
   end

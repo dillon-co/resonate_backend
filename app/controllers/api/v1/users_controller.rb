@@ -27,11 +27,16 @@ class Api::V1::UsersController < ApplicationController
 
   def current_with_role
     user = Current.user
+    Rails.logger.info("UsersController#current_with_role called for user #{user.id} with role #{user.role}")
+    
     render json: {
       id: user.id,
       display_name: user.display_name,
       role: user.role
     }
+  rescue => e
+    Rails.logger.error("Error in current_with_role: #{e.message}")
+    render json: { error: "Error retrieving user role" }, status: :internal_server_error
   end
 
   def show_profile

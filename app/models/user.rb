@@ -9,7 +9,7 @@ class User < ApplicationRecord
   has_many :received_friendships, class_name: 'Friendship', foreign_key: 'friend_id'
   has_many :received_friends, through: :received_friendships, source: :user
 
-  enum role: [ :user, :admin ]
+  enum :role [ :user, :admin ]
   # OAuth methods
   def self.create_from_oauth(auth)
     email = auth.info['email']

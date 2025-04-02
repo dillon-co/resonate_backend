@@ -520,6 +520,77 @@ class User < ApplicationRecord
     suggestions.sort_by { |suggestion| -suggestion[:mutual_friends_count] }.take(limit)
   end
   
+  # Check if this user is friends with another user
+  def is_friend_with?(other_user)
+    return false if other_user.nil? || other_user.id == self.id
+    
+    # Check both directions of friendship
+    Friendship.where(user_id: self.id, friend_id: other_user.id, status: :accepted)
+              .or(Friendship.where(user_id: other_user.id, friend_id: self.id, status: :accepted))
+              .exists?
+  end
+  
+  # Create a shared playlist with another user
+  def create_shared_playlist_with(other_user)
+    return nil unless spotify_connected? && other_user.spotify_connected?
+    return nil unless is_friend_with?(other_user)
+    
+    # Get top tracks from both users
+    my_tracks = get_top_tracks(limit: 25)
+    other_tracks = other_user.get_top_tracks(limit: 25)
+    
+    # Extract track IDs
+    my_track_ids = my_tracks && my_tracks['items'] ? my_tracks['items'].map { |t| t['uri'] } : []
+    other_track_ids = other_tracks && other_tracks['items'] ? other_tracks['items'].map { |t| t['uri'] } : []
+    
+    # Combine and shuffle tracks
+    combined_tracks = (my_track_ids + other_track_ids).uniq.shuffle.take(50)
+    
+    return nil if combined_tracks.empty?
+    
+    # Create a new playlist
+    playlist_name = "Shared Vibes: #{self.display_name} & #{other_user.display_name}"
+    playlist_description = "A shared playlist of tracks from #{self.display_name} and #{other_user.display_name}, created by Resonate."
+    
+    begin
+      # Create the playlist
+      playlist_response = spotify_api_call(
+        "users/#{spotify_id}/playlists", 
+        method: :post,
+        body: {
+          name: playlist_name,
+          description: playlist_description,
+          public: false,
+          collaborative: true
+        }
+      )
+      
+      return nil unless playlist_response && playlist_response['id']
+      
+      # Add tracks to the playlist
+      if combined_tracks.any?
+        spotify_api_call(
+          "playlists/#{playlist_response['id']}/tracks",
+          method: :post,
+          body: {
+            uris: combined_tracks
+          }
+        )
+      end
+      
+      # Return the playlist data
+      {
+        id: playlist_response['id'],
+        name: playlist_response['name'],
+        external_url: playlist_response['external_urls']['spotify'],
+        track_count: combined_tracks.size
+      }
+    rescue => e
+      Rails.logger.error("Error creating shared playlist: #{e.message}")
+      nil
+    end
+  end
+  
   # Music data caching to reduce API calls
   def cache_music_data!
     # This method can be called by a background job to periodically

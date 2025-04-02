@@ -41,6 +41,9 @@ Rails.application.routes.draw do
       
       # Pre-launch signup endpoint
       post '/signups', to: 'signups#create'
+      
+      # Playlists
+      post '/playlists/shared/:user_id', to: 'playlists#create_shared'
     end
   end
 end

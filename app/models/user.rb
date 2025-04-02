@@ -542,7 +542,6 @@ class User < ApplicationRecord
   
   # Create a shared playlist with another user
   def create_shared_playlist_with(other_user)
-    # return nil unless spotify_connected? && other_user.spotify_connected?
     return nil unless is_friend_with?(other_user)
     
     # Get top tracks from both users
@@ -560,6 +559,13 @@ class User < ApplicationRecord
     
     # Combine and shuffle tracks
     combined_tracks = (my_track_uris + other_track_uris).uniq.shuffle.take(50)
+    
+    # Ensure all track URIs are properly formatted
+    combined_tracks = combined_tracks.map do |uri|
+      uri.start_with?('spotify:track:') ? uri : "spotify:track:#{uri}"
+    end
+    
+    Rails.logger.info("Combined track URIs (#{combined_tracks.size}): #{combined_tracks.inspect}")
     
     return nil if combined_tracks.empty?
     
@@ -584,13 +590,15 @@ class User < ApplicationRecord
       
       # Add tracks to the playlist
       if combined_tracks.any?
-        spotify_api_call(
+        add_tracks_response = spotify_api_call(
           "playlists/#{playlist_response['id']}/tracks",
           method: :post,
           body: {
             uris: combined_tracks
           }
         )
+        
+        Rails.logger.info("Add tracks response: #{add_tracks_response.inspect}")
       end
       
       # Return the playlist data

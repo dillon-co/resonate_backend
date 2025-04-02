@@ -591,12 +591,12 @@ class User < ApplicationRecord
       # Add tracks to the playlist
       if combined_tracks.any?
         # Add tracks in smaller batches (Spotify API limits)
-        combined_tracks.each_slice(10) do |track_batch|
+      
           add_tracks_response = spotify_api_call(
             "playlists/#{playlist_response['id']}/tracks",
             method: :post,
             body: {
-              uris: track_batch.join(',')
+              uris: combined_tracks
             }
           )
           
@@ -604,7 +604,6 @@ class User < ApplicationRecord
           
           # Add a small delay between batch requests
           sleep(0.5)
-        end
       end
       
       # Return the playlist data

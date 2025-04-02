@@ -46,6 +46,12 @@ class Api::V1::AdminController < ApplicationController
     accepted_friendships = Friendship.where(status: :accepted).count
     pending_friendships = Friendship.where(status: :pending).count
     
+    # Login metrics - last 30 days
+    login_data = logins_by_day(30)
+    
+    # Daily active users - last 30 days
+    daily_active_users = daily_active_users_by_day(30)
+    
     render json: {
       user_metrics: {
         total_users: total_users,
@@ -59,7 +65,9 @@ class Api::V1::AdminController < ApplicationController
         accepted_friendships: accepted_friendships,
         pending_friendships: pending_friendships,
         acceptance_rate: total_friendships > 0 ? (accepted_friendships.to_f / total_friendships * 100).round(2) : 0
-      }
+      },
+      login_metrics: login_data,
+      daily_active_users: daily_active_users
     }
   end
   
@@ -97,5 +105,53 @@ class Api::V1::AdminController < ApplicationController
     
     # Convert to array of objects for the frontend
     months.map { |month, count| { name: month, value: count } }.reverse
+  end
+  
+  def logins_by_day(days = 30)
+    end_date = Date.today
+    start_date = end_date - (days - 1).days
+    
+    # Create a hash with all days initialized to 0
+    daily_logins = {}
+    (0...days).each do |i|
+      day = (start_date + i.days)
+      daily_logins[day.strftime("%b %d")] = 0
+    end
+    
+    # Count sessions created each day
+    Session.where(created_at: start_date.beginning_of_day..end_date.end_of_day)
+           .group("DATE_TRUNC('day', created_at)")
+           .count
+           .each do |date, count|
+             day_str = date.strftime("%b %d")
+             daily_logins[day_str] = count if daily_logins.key?(day_str)
+           end
+    
+    # Convert to array of objects for the frontend
+    daily_logins.map { |day, count| { name: day, value: count } }
+  end
+  
+  def daily_active_users_by_day(days = 30)
+    end_date = Date.today
+    start_date = end_date - (days - 1).days
+    
+    # Create a hash with all days initialized to 0
+    daily_users = {}
+    (0...days).each do |i|
+      day = (start_date + i.days)
+      daily_users[day.strftime("%b %d")] = 0
+    end
+    
+    # Count unique users with sessions each day
+    Session.where(created_at: start_date.beginning_of_day..end_date.end_of_day)
+           .group("DATE_TRUNC('day', created_at)")
+           .select("DATE_TRUNC('day', created_at) as day, COUNT(DISTINCT user_id) as count")
+           .each do |record|
+             day_str = record.day.strftime("%b %d")
+             daily_users[day_str] = record.count if daily_users.key?(day_str)
+           end
+    
+    # Convert to array of objects for the frontend
+    daily_users.map { |day, count| { name: day, value: count } }
   end
 end

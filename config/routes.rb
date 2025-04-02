@@ -51,6 +51,7 @@ Rails.application.routes.draw do
       # Admin routes
       get '/admin/users', to: 'admin#users'
       patch '/admin/users/:id/update_role', to: 'admin#update_user_role'
+      get '/admin/metrics', to: 'admin#metrics'
     end
   end
 end

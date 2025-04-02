@@ -30,6 +30,39 @@ class Api::V1::AdminController < ApplicationController
     end
   end
   
+  def metrics
+    Rails.logger.info("Admin#metrics called by user #{Current.user.id} with role #{Current.user.role}")
+    
+    # User metrics
+    total_users = User.count
+    users_with_spotify = User.where.not(spotify_access_token: nil).count
+    admin_users = User.where(role: :admin).count
+    
+    # User registration metrics
+    user_registrations = user_registrations_by_month
+    
+    # Friendship metrics
+    total_friendships = Friendship.count
+    accepted_friendships = Friendship.where(status: :accepted).count
+    pending_friendships = Friendship.where(status: :pending).count
+    
+    render json: {
+      user_metrics: {
+        total_users: total_users,
+        users_with_spotify: users_with_spotify,
+        admin_users: admin_users,
+        spotify_connection_rate: (users_with_spotify.to_f / total_users * 100).round(2)
+      },
+      user_registrations: user_registrations,
+      friendship_metrics: {
+        total_friendships: total_friendships,
+        accepted_friendships: accepted_friendships,
+        pending_friendships: pending_friendships,
+        acceptance_rate: total_friendships > 0 ? (accepted_friendships.to_f / total_friendships * 100).round(2) : 0
+      }
+    }
+  end
+  
   private
   
   def require_admin
@@ -39,5 +72,30 @@ class Api::V1::AdminController < ApplicationController
       Rails.logger.warn("Unauthorized admin access attempt by user #{Current.user.id} with role #{Current.user.role}")
       render json: { error: "Unauthorized. Admin access required." }, status: :unauthorized
     end
+  end
+  
+  def user_registrations_by_month
+    # Get user registrations by month for the last 12 months
+    end_date = Date.today
+    start_date = end_date - 11.months
+    
+    # Create a hash with all months initialized to 0
+    months = {}
+    (0..11).each do |i|
+      month = (end_date - i.months).beginning_of_month
+      months[month.strftime("%b %Y")] = 0
+    end
+    
+    # Count users created in each month
+    User.where(created_at: start_date.beginning_of_month..end_date.end_of_month)
+        .group("DATE_TRUNC('month', created_at)")
+        .count
+        .each do |date, count|
+          month_str = date.strftime("%b %Y")
+          months[month_str] = count if months.key?(month_str)
+        end
+    
+    # Convert to array of objects for the frontend
+    months.map { |month, count| { name: month, value: count } }.reverse
   end
 end

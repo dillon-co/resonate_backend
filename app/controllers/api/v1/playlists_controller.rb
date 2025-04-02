@@ -11,11 +11,6 @@ class Api::V1::PlaylistsController < ApplicationController
       return render json: { error: "You must be friends with this user to create a shared playlist" }, status: :forbidden
     end
     
-    # Check if both users have Spotify connected
-    unless Current.user.spotify_connected? && other_user.spotify_connected?
-      return render json: { error: "Both users must have Spotify connected to create a shared playlist" }, status: :unprocessable_entity
-    end
-    
     # Create the shared playlist
     playlist = Current.user.create_shared_playlist_with(other_user)
     

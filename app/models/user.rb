@@ -45,12 +45,22 @@ class User < ApplicationRecord
   def get_top_tracks(time_range: 'short_term', limit: 50)
     # time_range options: short_term (4 weeks), medium_term (6 months), long_term (years)
     response = spotify_api_call("me/top/tracks", params: { time_range: time_range, limit: limit })
-    format_tracks_response(response)
+    formatted_response = format_tracks_response(response)
+    
+    # Log the response for debugging
+    Rails.logger.info("Top tracks response for user #{id}: #{formatted_response.inspect}")
+    
+    formatted_response
   end
   
   def get_top_artists(time_range: 'short_term', limit: 50)
     response = spotify_api_call("me/top/artists", params: { time_range: time_range, limit: limit })
-    format_artists_response(response)
+    formatted_response = format_artists_response(response)
+    
+    # Log the response for debugging
+    Rails.logger.info("Top artists response for user #{id}: #{formatted_response.inspect}")
+    
+    formatted_response
   end
   
   def get_recently_played(limit: 50)

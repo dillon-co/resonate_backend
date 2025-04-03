@@ -253,72 +253,72 @@ class User < ApplicationRecord
   end
   
   # Find musical compatibility score with another user
-  def musical_compatibility_with(other_user, depth: :medium)
-    time_range = time_range_for_depth(depth)
-    
-    # Get cached data or fetch if not available
-    my_artists = Rails.cache.fetch("user:#{id}:top_artists:#{time_range}", expires_in: 1.day) do
-      get_top_artists(time_range: time_range)
-    end
-    
-    their_artists = Rails.cache.fetch("user:#{other_user.id}:top_artists:#{time_range}", expires_in: 1.day) do
-      other_user.get_top_artists(time_range: time_range)
-    end
-    
-    # Ensure we have arrays
-    my_artists = my_artists.is_a?(Array) ? my_artists : []
-    their_artists = their_artists.is_a?(Array) ? their_artists : []
-    
-    # Extract IDs - the formatted response has id as a key, not 'id'
-    my_artist_ids = my_artists.map { |a| a[:id] }
-    their_artist_ids = their_artists.map { |a| a[:id] }
-    
-    # Calculate overlap
-    common_artists = my_artist_ids & their_artist_ids
-    total_artists = my_artist_ids | their_artist_ids
-    
-    # Simple Jaccard similarity coefficient
-    artist_similarity = total_artists.empty? ? 0 : (common_artists.size.to_f / total_artists.size)
-    
-    # Get audio features for both users' top tracks to compare musical preferences
-    my_tracks = Rails.cache.fetch("user:#{id}:top_tracks:#{time_range}", expires_in: 1.day) do
-      get_top_tracks(time_range: time_range)
-    end
-    
-    their_tracks = Rails.cache.fetch("user:#{other_user.id}:top_tracks:#{time_range}", expires_in: 1.day) do
-      other_user.get_top_tracks(time_range: time_range)
-    end
-    
-    # Ensure we have arrays
-    my_tracks = my_tracks.is_a?(Array) ? my_tracks : []
-    their_tracks = their_tracks.is_a?(Array) ? their_tracks : []
-    
-    # Compare audio features if there are tracks
-    feature_similarity = 0
-    # if !my_tracks.empty? && !their_tracks.empty?
-    #   my_track_ids = my_tracks.map { |t| t[:id] }
-    #   their_track_ids = their_tracks.map { |t| t[:id] }
-      
-    #   my_features = get_audio_features(my_track_ids)
-    #   their_features = other_user.get_audio_features(their_track_ids)
-      
-    #   # Calculate distance between feature vectors (normalized)
-    #   feature_similarity = calculate_feature_similarity(my_features, their_features)
-    # end
-    
-    # Combine metrics (you can adjust weights) - keep as decimal (0-1)
-    overall_score = (artist_similarity * 0.6) #+ (feature_similarity * 0.4)
-    
-    # Ensure the score is between 0 and 1 before converting to percentage
-    overall_score = [0, [overall_score, 1].min].max
-    
-    # Return score as percentage (ensure it's not greater than 100)
-    [overall_score * 100, 100].min.round(1)
-  end
-  
   # def musical_compatibility_with(other_user, depth: :medium)
-  #   MusicCompatibilityService.calculate_compatibility(self, other_user, depth: depth)
+  #   time_range = time_range_for_depth(depth)
+    
+  #   # Get cached data or fetch if not available
+  #   my_artists = Rails.cache.fetch("user:#{id}:top_artists:#{time_range}", expires_in: 1.day) do
+  #     get_top_artists(time_range: time_range)
+  #   end
+    
+  #   their_artists = Rails.cache.fetch("user:#{other_user.id}:top_artists:#{time_range}", expires_in: 1.day) do
+  #     other_user.get_top_artists(time_range: time_range)
+  #   end
+    
+  #   # Ensure we have arrays
+  #   my_artists = my_artists.is_a?(Array) ? my_artists : []
+  #   their_artists = their_artists.is_a?(Array) ? their_artists : []
+    
+  #   # Extract IDs - the formatted response has id as a key, not 'id'
+  #   my_artist_ids = my_artists.map { |a| a[:id] }
+  #   their_artist_ids = their_artists.map { |a| a[:id] }
+    
+  #   # Calculate overlap
+  #   common_artists = my_artist_ids & their_artist_ids
+  #   total_artists = my_artist_ids | their_artist_ids
+    
+  #   # Simple Jaccard similarity coefficient
+  #   artist_similarity = total_artists.empty? ? 0 : (common_artists.size.to_f / total_artists.size)
+    
+  #   # Get audio features for both users' top tracks to compare musical preferences
+  #   my_tracks = Rails.cache.fetch("user:#{id}:top_tracks:#{time_range}", expires_in: 1.day) do
+  #     get_top_tracks(time_range: time_range)
+  #   end
+    
+  #   their_tracks = Rails.cache.fetch("user:#{other_user.id}:top_tracks:#{time_range}", expires_in: 1.day) do
+  #     other_user.get_top_tracks(time_range: time_range)
+  #   end
+    
+  #   # Ensure we have arrays
+  #   my_tracks = my_tracks.is_a?(Array) ? my_tracks : []
+  #   their_tracks = their_tracks.is_a?(Array) ? their_tracks : []
+    
+  #   # Compare audio features if there are tracks
+  #   feature_similarity = 0
+  #   # if !my_tracks.empty? && !their_tracks.empty?
+  #   #   my_track_ids = my_tracks.map { |t| t[:id] }
+  #   #   their_track_ids = their_tracks.map { |t| t[:id] }
+      
+  #   #   my_features = get_audio_features(my_track_ids)
+  #   #   their_features = other_user.get_audio_features(their_track_ids)
+      
+  #   #   # Calculate distance between feature vectors (normalized)
+  #   #   feature_similarity = calculate_feature_similarity(my_features, their_features)
+  #   # end
+    
+  #   # Combine metrics (you can adjust weights) - keep as decimal (0-1)
+  #   overall_score = (artist_similarity * 0.6) #+ (feature_similarity * 0.4)
+    
+  #   # Ensure the score is between 0 and 1 before converting to percentage
+  #   overall_score = [0, [overall_score, 1].min].max
+    
+  #   # Return score as percentage (ensure it's not greater than 100)
+  #   [overall_score * 100, 100].min.round(1)
   # end
+  
+  def musical_compatibility_with(other_user, depth: :medium)
+    MusicCompatibilityService.calculate_compatibility(self, other_user, depth: depth)
+  end
   
   # Generate recommendations based on friends' listening habits
   def friend_based_recommendations(limit: 20)

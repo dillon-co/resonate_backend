@@ -341,7 +341,7 @@ class User < ApplicationRecord
       # FALLBACK APPROACH: Get friends' top tracks directly
       Rails.logger.info("Using fallback for recommendations: returning friends' top tracks")
       
-      all_friend_tracks = friends.flat_map do |friend|
+      all_friend_tracks = friends.flat_map do |friend| 
         begin
           # Try to get from friend's cache first
           friend_cache_key = "user:#{friend.id}:top_tracks:short_term"
@@ -790,32 +790,37 @@ class User < ApplicationRecord
     client_id = ENV['SPOTIFY_CLIENT_ID']
     client_secret = ENV['SPOTIFY_CLIENT_SECRET']
     
-    response = Faraday.new(url: 'https://accounts.spotify.com/api/token') do |conn|
-      conn.request :url_encoded
-      conn.response :json
-    end.post do |req|
-      req.headers['Authorization'] = "Basic #{Base64.strict_encode64("#{client_id}:#{client_secret}")}"
-      req.headers['Content-Type'] = 'application/x-www-form-urlencoded'
-      req.body = {
-        grant_type: 'refresh_token',
-        refresh_token: spotify_refresh_token
-      }
-    end
-    
-    if response.status == 200
-      update(
-        spotify_access_token: response.body['access_token'],
-        spotify_token_expires_at: Time.current + response.body['expires_in'].seconds
-      )
-      
-      # If a new refresh token is provided, update that too
-      if response.body['refresh_token'].present?
-        update(spotify_refresh_token: response.body['refresh_token'])
+    begin
+      response = Faraday.new(url: 'https://accounts.spotify.com/api/token') do |conn|
+        conn.request :url_encoded
+        conn.response :json
+      end.post do |req|
+        req.headers['Authorization'] = "Basic #{Base64.strict_encode64("#{client_id}:#{client_secret}")}"
+        req.headers['Content-Type'] = 'application/x-www-form-urlencoded'
+        req.body = {
+          grant_type: 'refresh_token',
+          refresh_token: spotify_refresh_token
+        }
       end
       
-      true
-    else
-      Rails.logger.error("Failed to refresh Spotify token: #{response.body}")
+      if response.status == 200
+        update(
+          spotify_access_token: response.body['access_token'],
+          spotify_token_expires_at: Time.current + response.body['expires_in'].seconds
+        )
+        
+        # If a new refresh token is provided, update that too
+        if response.body['refresh_token'].present?
+          update(spotify_refresh_token: response.body['refresh_token'])
+        end
+        
+        true
+      else
+        Rails.logger.error("Failed to refresh Spotify token: #{response.status} - #{response.body}")
+        false
+      end
+    rescue => e
+      Rails.logger.error("Exception during Spotify token refresh: #{e.message}")
       false
     end
   end

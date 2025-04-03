@@ -295,16 +295,16 @@ class User < ApplicationRecord
     
     # Compare audio features if there are tracks
     feature_similarity = 0
-    if !my_tracks.empty? && !their_tracks.empty?
-      my_track_ids = my_tracks.map { |t| t[:id] }
-      their_track_ids = their_tracks.map { |t| t[:id] }
+    # if !my_tracks.empty? && !their_tracks.empty?
+    #   my_track_ids = my_tracks.map { |t| t[:id] }
+    #   their_track_ids = their_tracks.map { |t| t[:id] }
       
-      my_features = get_audio_features(my_track_ids)
-      their_features = other_user.get_audio_features(their_track_ids)
+    #   my_features = get_audio_features(my_track_ids)
+    #   their_features = other_user.get_audio_features(their_track_ids)
       
-      # Calculate distance between feature vectors (normalized)
-      feature_similarity = calculate_feature_similarity(my_features, their_features)
-    end
+    #   # Calculate distance between feature vectors (normalized)
+    #   feature_similarity = calculate_feature_similarity(my_features, their_features)
+    # end
     
     # Combine metrics (you can adjust weights)
     overall_score = (artist_similarity * 0.6) + (feature_similarity * 0.4)

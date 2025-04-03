@@ -312,8 +312,8 @@ class User < ApplicationRecord
     # Ensure the score is between 0 and 1 before converting to percentage
     overall_score = [0, [overall_score, 1].min].max
     
-    # Return score as percentage
-    (overall_score * 100).round(1)
+    # Return score as percentage (ensure it's not greater than 100)
+    [overall_score * 100, 100].min.round(1)
   end
   
   # Generate recommendations based on friends' listening habits

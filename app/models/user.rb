@@ -307,13 +307,13 @@ class User < ApplicationRecord
     # end
     
     # Combine metrics (you can adjust weights)
-    overall_score = (artist_similarity * 0.6) + (feature_similarity * 0.4)
+    overall_score = (artist_similarity * 0.6) #+ (feature_similarity * 0.4)
     
     # Ensure the score is between 0 and 1 before converting to percentage
-    overall_score = [0, [overall_score, 1].min].max
+    [0, [overall_score, 1].min].max
     
     # Return score as percentage (ensure it's not greater than 100)
-    [overall_score * 100, 100].min.round(1)
+    # [overall_score * 100, 100].min.round(1)
   end
   
   # Generate recommendations based on friends' listening habits

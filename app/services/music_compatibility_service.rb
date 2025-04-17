@@ -1,6 +1,12 @@
 class MusicCompatibilityService
   # Calculate musical compatibility between two users
   def self.calculate_compatibility(user1, user2, depth: :shallow)
+    # Check if both users have embeddings - if so, use embedding-based compatibility
+    if user1.embedding.present? && user2.embedding.present?
+      return calculate_embedding_compatibility(user1, user2)
+    end
+    
+    # Fall back to traditional compatibility calculation if embeddings aren't available
     # Get time range based on depth
     time_range = time_range_for_depth(depth)
     
@@ -60,9 +66,77 @@ class MusicCompatibilityService
     (overall_score * 100).round(1)
   end
   
+  # Calculate compatibility using user embeddings
+  def self.calculate_embedding_compatibility(user1, user2)
+    # Ensure both users have embeddings
+    unless user1.embedding.present? && user2.embedding.present?
+      # Generate embeddings if not present
+      UserEmbeddingService.update_embedding_for(user1) unless user1.embedding.present?
+      UserEmbeddingService.update_embedding_for(user2) unless user2.embedding.present?
+      
+      # If still no embeddings, fall back to traditional method
+      if !user1.embedding.present? || !user2.embedding.present?
+        Rails.logger.warn("Could not generate embeddings for users, falling back to traditional compatibility")
+        return calculate_compatibility(user1, user2, depth: :deep)
+      end
+    end
+    
+    # Cache key for the compatibility score
+    cache_key = "user_compatibility:#{[user1.id, user2.id].sort.join('-')}:#{user1.updated_at.to_i}-#{user2.updated_at.to_i}"
+    
+    # Try to get from cache first
+    cached_score = Rails.cache.read(cache_key)
+    return cached_score if cached_score.present?
+    
+    # Calculate cosine similarity between user embeddings
+    similarity = cosine_similarity(user1.embedding, user2.embedding)
+    
+    # Convert similarity to percentage (0-100 scale)
+    # Cosine similarity ranges from -1 to 1, so we normalize to 0-100
+    score = ((similarity + 1) / 2 * 100).round(1)
+    
+    # Cache the result
+    Rails.cache.write(cache_key, score, expires_in: 1.day)
+    
+    score
+  end
+  
+  # Calculate cosine similarity between two vectors
+  def self.cosine_similarity(vec1, vec2)
+    # Use the Neighbor gem's cosine distance and convert to similarity
+    # Cosine distance = 1 - cosine similarity, so similarity = 1 - distance
+    return 0 unless vec1.is_a?(Array) && vec2.is_a?(Array) && vec1.size == vec2.size
+    
+    # Create a temporary index with just one vector
+    index = Neighbor::Index.new(dimensions: vec1.size, metric: :cosine)
+    index.add(1, vec1)
+    
+    # Find the nearest neighbor (which will be the only one in the index)
+    nearest = index.nearest_neighbors(vec2, k: 1)
+    
+    # If no neighbors found (shouldn't happen), return 0
+    return 0 if nearest.empty?
+    
+    # Convert distance to similarity (cosine distance = 1 - cosine similarity)
+    # nearest[0][1] contains the distance
+    1 - nearest[0][1]
+  end
+  
   private
   
-  # Calculate Jaccard similarity between two sets of artist IDs
+  def self.time_range_for_depth(depth)
+    case depth
+    when :shallow
+      'short_term'
+    when :medium
+      'medium_term'
+    when :deep
+      'long_term'
+    else
+      'medium_term'
+    end
+  end
+  
   def self.calculate_artist_similarity(artist_ids1, artist_ids2)
     common_artists = artist_ids1 & artist_ids2
     total_artists = artist_ids1 | artist_ids2
@@ -70,7 +144,6 @@ class MusicCompatibilityService
     total_artists.empty? ? 0 : (common_artists.size.to_f / total_artists.size)
   end
   
-  # Compare track features between two users based on Last.fm analysis
   def self.compare_track_features(analysis1, analysis2)
     # If either analysis is missing, return 0
     return 0 if analysis1.blank? || analysis2.blank?
@@ -102,7 +175,6 @@ class MusicCompatibilityService
     1 - (total_difference / feature_count)
   end
   
-  # Compare genres between two users based on Last.fm analysis
   def self.compare_genres(analysis1, analysis2)
     # If either analysis is missing, return 0
     return 0 if analysis1.blank? || analysis2.blank?
@@ -126,15 +198,5 @@ class MusicCompatibilityService
     
     # Combine tag similarity with genre match (weighted)
     (tag_similarity * 0.7) + (genre_match * 0.3)
-  end
-  
-  # Convert depth to time range
-  def self.time_range_for_depth(depth)
-    case depth
-    when :shallow then 'short_term'  # Recent 4 weeks
-    when :medium then 'medium_term'  # Last 6 months
-    when :deep then 'long_term'      # Several years
-    else 'short_term'
-    end
   end
 end

@@ -53,3 +53,8 @@ group :development, :test do
 end
 
 
+
+gem "langchainrb_rails", "~> 0.1.12"
+gem 'ruby-openai'
+gem "sidekiq", "~> 8.0"
+gem "neighbor"

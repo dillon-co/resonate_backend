@@ -38,38 +38,7 @@ class MusicRecommendationService
     result
   end
   
-  # Generate fallback recommendations when TasteDive fails
-  def self.generate_fallback_recommendations(track_info, limit)
-    # Create a list of popular artists in similar genres
-    # This is a static fallback that doesn't rely on Spotify's API
-    fallback_artists = [
-      { 'Name' => 'The Beatles', 'Type' => 'music' },
-      { 'Name' => 'Queen', 'Type' => 'music' },
-      { 'Name' => 'Michael Jackson', 'Type' => 'music' },
-      { 'Name' => 'Beyoncé', 'Type' => 'music' },
-      { 'Name' => 'Ed Sheeran', 'Type' => 'music' },
-      { 'Name' => 'Taylor Swift', 'Type' => 'music' },
-      { 'Name' => 'Drake', 'Type' => 'music' },
-      { 'Name' => 'Adele', 'Type' => 'music' },
-      { 'Name' => 'Kendrick Lamar', 'Type' => 'music' },
-      { 'Name' => 'Billie Eilish', 'Type' => 'music' },
-      { 'Name' => 'The Weeknd', 'Type' => 'music' },
-      { 'Name' => 'Ariana Grande', 'Type' => 'music' },
-      { 'Name' => 'Bruno Mars', 'Type' => 'music' },
-      { 'Name' => 'Coldplay', 'Type' => 'music' },
-      { 'Name' => 'Rihanna', 'Type' => 'music' },
-      { 'Name' => 'Post Malone', 'Type' => 'music' },
-      { 'Name' => 'Lady Gaga', 'Type' => 'music' },
-      { 'Name' => 'Justin Bieber', 'Type' => 'music' },
-      { 'Name' => 'Dua Lipa', 'Type' => 'music' },
-      { 'Name' => 'BTS', 'Type' => 'music' }
-    ]
-    
-    # Shuffle the list to get different recommendations each time
-    fallback_artists.shuffle.take(limit)
-  end
-  
-  # Get recommendations based on a user's top tracks
+  # Get recommendations for a user based on their top tracks
   def self.get_recommendations_for_user(user, limit: 20, time_range: 'short_term')
     # Get user's top tracks
     top_tracks = user.get_top_tracks(time_range: time_range, limit: 50)
@@ -113,6 +82,172 @@ class MusicRecommendationService
     
     Rails.cache.write(cache_key, result, expires_in: 1.day)
     result
+  end
+  
+  # Get recommendations for a user based on their embedding
+  def self.get_embedding_recommendations_for_user(user, limit: 20)
+    # Ensure user has an embedding
+    unless user.embedding.present?
+      # Generate embedding if not present
+
+      UserEmbeddingService.update_embedding_for(user) unless user.embedding.present?
+      
+      # If still no embedding, fall back to regular recommendations
+      unless user.embedding.present?
+        Rails.logger.warn("Could not generate embedding for user #{user.id}, falling back to regular recommendations")
+        return get_recommendations(user.tracks.limit(10), limit: limit)
+      end
+    end
+    
+    # Cache key based on user ID and embedding updated timestamp
+    cache_key = "user_embedding_recommendations:#{user.id}:#{user.updated_at.to_i}:#{limit}"
+    
+    # Try to get from cache first
+    cached_recommendations = Rails.cache.read(cache_key)
+    return cached_recommendations if cached_recommendations.present?
+    
+    # Get recommendations using embeddings
+    recommended_tracks = get_track_recommendations_by_embedding(user, limit)
+    
+    # If we couldn't get enough recommendations, supplement with artist recommendations
+    if recommended_tracks.size < limit
+      remaining = limit - recommended_tracks.size
+      recommended_artists = get_artist_recommendations_by_embedding(user, remaining * 2)
+      
+      # Get top tracks from recommended artists
+      artist_tracks = get_top_tracks_from_artists(recommended_artists, remaining)
+      
+      # Combine recommendations, removing duplicates
+      all_track_ids = recommended_tracks.map { |t| t[:id] }
+      artist_tracks.each do |track|
+        unless all_track_ids.include?(track[:id])
+          recommended_tracks << track
+          all_track_ids << track[:id]
+          break if recommended_tracks.size >= limit
+        end
+      end
+    end
+    
+    # Format result
+    result = {
+      'tracks' => recommended_tracks
+    }
+    
+    # Cache the result
+    Rails.cache.write(cache_key, result, expires_in: 1.day)
+    result
+  end
+  
+  # Get track recommendations using embedding similarity
+  def self.get_track_recommendations_by_embedding(user, limit)
+    # Get user's existing track IDs to exclude
+    user_track_ids = user.tracks.pluck(:id)
+    
+    # Find tracks with embeddings
+    tracks_with_embeddings = TrackFeature.where.not(embedding: nil)
+                                        .where.not(track_id: user_track_ids)
+                                        .includes(:track)
+    
+    return [] if tracks_with_embeddings.empty?
+    
+    # Create a Neighbor index with track embeddings
+    track_index = Neighbor::Index.new(dimensions: user.embedding.size, metric: :cosine)
+    
+    # Add track embeddings to the index
+    tracks_with_embeddings.each do |track_feature|
+      track_index.add(track_feature.id, track_feature.embedding)
+    end
+    
+    # Find nearest neighbors
+    nearest_neighbors = track_index.nearest_neighbors(user.embedding, k: limit * 2)
+    
+    # Convert to track objects
+    recommended_tracks = []
+    nearest_neighbors.each do |neighbor_id, _distance|
+      track_feature = tracks_with_embeddings.find { |tf| tf.id == neighbor_id }
+      next unless track_feature&.track
+      
+      track = track_feature.track
+      recommended_tracks << {
+        id: track.spotify_id,
+        name: track.song_name,
+        artist: track.artist,
+        album_art_url: track.image_url,
+        popularity: 0, # We don't have this data, so default to 0
+        preview_url: nil, # We don't have this data
+        uri: "spotify:track:#{track.spotify_id}"
+      }
+      
+      break if recommended_tracks.size >= limit
+    end
+    
+    recommended_tracks
+  end
+  
+  # Get artist recommendations using embedding similarity
+  def self.get_artist_recommendations_by_embedding(user, limit)
+    # Get user's existing artist IDs to exclude
+    user_artist_ids = user.artists.pluck(:id)
+    
+    # Find artists with embeddings
+    artists_with_embeddings = ArtistFeature.where.not(embedding: nil)
+                                          .where.not(artist_id: user_artist_ids)
+                                          .includes(:artist)
+    
+    return [] if artists_with_embeddings.empty?
+    
+    # Create a Neighbor index with artist embeddings
+    artist_index = Neighbor::Index.new(dimensions: user.embedding.size, metric: :cosine)
+    
+    # Add artist embeddings to the index
+    artists_with_embeddings.each do |artist_feature|
+      artist_index.add(artist_feature.id, artist_feature.embedding)
+    end
+    
+    # Find nearest neighbors
+    nearest_neighbors = artist_index.nearest_neighbors(user.embedding, k: limit * 2)
+    
+    # Convert to artist objects
+    recommended_artists = []
+    nearest_neighbors.each do |neighbor_id, _distance|
+      artist_feature = artists_with_embeddings.find { |af| af.id == neighbor_id }
+      next unless artist_feature&.artist
+      
+      artist = artist_feature.artist
+      recommended_artists << artist
+      
+      break if recommended_artists.size >= limit
+    end
+    
+    recommended_artists
+  end
+  
+  # Get top tracks from a list of artists
+  def self.get_top_tracks_from_artists(artists, limit)
+    tracks = []
+    
+    artists.each do |artist|
+      # Try to find tracks by this artist in our database
+      artist_tracks = Track.where("artist ILIKE ?", "%#{artist.name}%").limit(3)
+      
+      artist_tracks.each do |track|
+        tracks << {
+          id: track.spotify_id,
+          name: track.song_name,
+          artist: track.artist,
+          album_art_url: track.image_url,
+          popularity: 0, # We don't have this data, so default to 0
+          preview_url: nil, # We don't have this data
+          uri: "spotify:track:#{track.spotify_id}"
+        }
+        
+        break if tracks.size >= limit
+      end
+      
+      break if tracks.size >= limit
+    end
+    
+    tracks
   end
   
   private

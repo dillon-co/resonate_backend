@@ -66,47 +66,59 @@ class MusicCompatibilityService
     # (overall_score * 100).round(1)
   end
   
-  # Calculate compatibility using user embeddings
+  # Calculate compatibility using user embeddings based on Euclidean Distance
   def self.calculate_embedding_compatibility(user1, user2)
     # Ensure both users have embeddings
     unless user1.embedding.present? && user2.embedding.present?
-      # Generate embeddings if not present
+      # Try to generate embeddings if not present (optional, could return 0 or error)
       UserEmbeddingService.update_embedding_for(user1) unless user1.embedding.present?
       UserEmbeddingService.update_embedding_for(user2) unless user2.embedding.present?
       
-      # If still no embeddings, fall back to traditional method
-      if !user1.embedding.present? || !user2.embedding.present?
-        Rails.logger.warn("Could not generate embeddings for users, falling back to traditional compatibility")
-        return calculate_compatibility(user1, user2, depth: :deep)
+      # If still no embeddings, return a default low score
+      unless user1.embedding.present? && user2.embedding.present?
+        Rails.logger.warn("Could not generate embeddings for compatibility check between users #{user1.id} and #{user2.id}. Returning 0.")
+        return 0
       end
     end
     
-    # Cache key for the compatibility score
-    cache_key = "user_compatibility:#{[user1.id, user2.id].sort.join('-')}:#{user1.updated_at.to_i}-#{user2.updated_at.to_i}"
+    # Cache key for the compatibility score (consider adding distance type to key if needed)
+    cache_key = "user_compatibility:#{[user1.id, user2.id].sort.join('-')}:euclidean:#{user1.updated_at.to_i}-#{user2.updated_at.to_i}"
     
     # Try to get from cache first
     cached_score = Rails.cache.read(cache_key)
     return cached_score if cached_score.present?
     
-    # Calculate cosine similarity between user embeddings
-    similarity = cosine_similarity(user1.embedding, user2.embedding)
+    # Calculate Euclidean distance
+    distance = calculate_euclidean_distance(user1.embedding, user2.embedding)
     
-    # Convert similarity to percentage (0-100 scale)
-    # Cosine similarity ranges from -1 to 1. Normalize to 0-1.
-    normalized_similarity = (similarity + 1) / 2.0
+    # Convert distance to similarity score (0-100 scale)
+    # Using similarity = 1 / (1 + distance) maps [0, inf) distance to (0, 1] similarity
+    similarity_score = (1.0 / (1.0 + distance)) * 100
     
-    # Apply a non-linear scaling (e.g., power of 4) to stretch the higher end
-    scaled_similarity = normalized_similarity ** 4
-    
-    score = (scaled_similarity * 100).round(1)
+    # Round the score
+    score = similarity_score.round(1)
     
     # Cache the result
     Rails.cache.write(cache_key, score, expires_in: 1.day)
     
     score
   end
-  
+
+  # Helper method to calculate Euclidean distance
+  def self.calculate_euclidean_distance(vec1, vec2)
+    return Float::INFINITY unless vec1.is_a?(Array) && vec2.is_a?(Array) && vec1.size == vec2.size && vec1.size > 0
+
+    sum_of_squares = 0
+    vec1.zip(vec2).each do |v1, v2|
+      next unless v1.is_a?(Numeric) && v2.is_a?(Numeric)
+      sum_of_squares += (v1 - v2)**2
+    end
+
+    Math.sqrt(sum_of_squares)
+  end
+
   # Calculate cosine similarity between two vectors (pure Ruby implementation)
+  # Keep this method as it might be useful elsewhere or for future comparison
   def self.cosine_similarity(vec1, vec2)
     return 0 unless vec1.is_a?(Array) && vec2.is_a?(Array) && vec1.size == vec2.size && vec1.size > 0
 
@@ -132,6 +144,8 @@ class MusicCompatibilityService
   
   private
   
+  # Determine time range based on compatibility depth
+  # Keep this method as it might be useful elsewhere
   def self.time_range_for_depth(depth)
     case depth
     when :shallow

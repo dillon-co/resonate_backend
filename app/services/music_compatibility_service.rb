@@ -95,8 +95,8 @@ class MusicCompatibilityService
     # Cosine similarity ranges from -1 to 1. Normalize to 0-1.
     normalized_similarity = (similarity + 1) / 2.0
     
-    # Apply a non-linear scaling (e.g., squaring) to stretch the higher end
-    scaled_similarity = normalized_similarity ** 2
+    # Apply a non-linear scaling (e.g., power of 4) to stretch the higher end
+    scaled_similarity = normalized_similarity ** 4
     
     score = (scaled_similarity * 100).round(1)
     

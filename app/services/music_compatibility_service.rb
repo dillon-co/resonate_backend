@@ -92,8 +92,13 @@ class MusicCompatibilityService
     similarity = cosine_similarity(user1.embedding, user2.embedding)
     
     # Convert similarity to percentage (0-100 scale)
-    # Cosine similarity ranges from -1 to 1, so we normalize to 0-100
-    score = ((similarity + 1) / 2 * 100).round(1)
+    # Cosine similarity ranges from -1 to 1. Normalize to 0-1.
+    normalized_similarity = (similarity + 1) / 2.0
+    
+    # Apply a non-linear scaling (e.g., squaring) to stretch the higher end
+    scaled_similarity = normalized_similarity ** 2
+    
+    score = (scaled_similarity * 100).round(1)
     
     # Cache the result
     Rails.cache.write(cache_key, score, expires_in: 1.day)

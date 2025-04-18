@@ -5,65 +5,65 @@ class MusicCompatibilityService
     if user1.embedding.present? && user2.embedding.present?
       return calculate_embedding_compatibility(user1, user2)
     end
+    0
+    # # Fall back to traditional compatibility calculation if embeddings aren't available
+    # # Get time range based on depth
+    # time_range = time_range_for_depth(depth)
     
-    # Fall back to traditional compatibility calculation if embeddings aren't available
-    # Get time range based on depth
-    time_range = time_range_for_depth(depth)
+    # # Get cached data or fetch if not available
+    # user1_artists = Rails.cache.fetch("user:#{user1.id}:top_artists:#{time_range}", expires_in: 1.day) do
+    #   user1.get_top_artists(time_range: time_range)
+    # end
     
-    # Get cached data or fetch if not available
-    user1_artists = Rails.cache.fetch("user:#{user1.id}:top_artists:#{time_range}", expires_in: 1.day) do
-      user1.get_top_artists(time_range: time_range)
-    end
+    # user2_artists = Rails.cache.fetch("user:#{user2.id}:top_artists:#{time_range}", expires_in: 1.day) do
+    #   user2.get_top_artists(time_range: time_range)
+    # end
     
-    user2_artists = Rails.cache.fetch("user:#{user2.id}:top_artists:#{time_range}", expires_in: 1.day) do
-      user2.get_top_artists(time_range: time_range)
-    end
+    # # Ensure we have arrays
+    # user1_artists = user1_artists.is_a?(Array) ? user1_artists : []
+    # user2_artists = user2_artists.is_a?(Array) ? user2_artists : []
     
-    # Ensure we have arrays
-    user1_artists = user1_artists.is_a?(Array) ? user1_artists : []
-    user2_artists = user2_artists.is_a?(Array) ? user2_artists : []
+    # # Extract IDs
+    # user1_artist_ids = user1_artists.map { |a| a[:id] }
+    # user2_artist_ids = user2_artists.map { |a| a[:id] }
     
-    # Extract IDs
-    user1_artist_ids = user1_artists.map { |a| a[:id] }
-    user2_artist_ids = user2_artists.map { |a| a[:id] }
+    # # Calculate artist overlap using Jaccard similarity
+    # artist_similarity = calculate_artist_similarity(user1_artist_ids, user2_artist_ids)
     
-    # Calculate artist overlap using Jaccard similarity
-    artist_similarity = calculate_artist_similarity(user1_artist_ids, user2_artist_ids)
+    # # Get tracks for both users
+    # user1_tracks = Rails.cache.fetch("user:#{user1.id}:top_tracks:#{time_range}", expires_in: 1.day) do
+    #   user1.get_top_tracks(time_range: time_range)
+    # end
     
-    # Get tracks for both users
-    user1_tracks = Rails.cache.fetch("user:#{user1.id}:top_tracks:#{time_range}", expires_in: 1.day) do
-      user1.get_top_tracks(time_range: time_range)
-    end
+    # user2_tracks = Rails.cache.fetch("user:#{user2.id}:top_tracks:#{time_range}", expires_in: 1.day) do
+    #   user2.get_top_tracks(time_range: time_range)
+    # end
     
-    user2_tracks = Rails.cache.fetch("user:#{user2.id}:top_tracks:#{time_range}", expires_in: 1.day) do
-      user2.get_top_tracks(time_range: time_range)
-    end
+    # # Ensure we have arrays
+    # user1_tracks = user1_tracks.is_a?(Array) ? user1_tracks : []
+    # user2_tracks = user2_tracks.is_a?(Array) ? user2_tracks : []
     
-    # Ensure we have arrays
-    user1_tracks = user1_tracks.is_a?(Array) ? user1_tracks : []
-    user2_tracks = user2_tracks.is_a?(Array) ? user2_tracks : []
+    # # Calculate track similarity using Last.fm data
+    # track_similarity = 0
+    # genre_similarity = 0
     
-    # Calculate track similarity using Last.fm data
-    track_similarity = 0
-    genre_similarity = 0
-    
-    if !user1_tracks.empty? && !user2_tracks.empty?
-      # Use MusicAnalysisService to analyze tracks with Last.fm
-      user1_analysis = MusicAnalysisService.analyze_tracks(user1_tracks)
-      user2_analysis = MusicAnalysisService.analyze_tracks(user2_tracks)
+    # if !user1_tracks.empty? && !user2_tracks.empty?
+    #   # Use MusicAnalysisService to analyze tracks with Last.fm
+    #   user1_analysis = MusicAnalysisService.analyze_tracks(user1_tracks)
+    #   user2_analysis = MusicAnalysisService.analyze_tracks(user2_tracks)
       
-      # Compare track features
-      track_similarity = compare_track_features(user1_analysis, user2_analysis)
+    #   # Compare track features
+    #   track_similarity = compare_track_features(user1_analysis, user2_analysis)
       
-      # Compare genres
-      genre_similarity = compare_genres(user1_analysis, user2_analysis)
-    end
+    #   # Compare genres
+    #   genre_similarity = compare_genres(user1_analysis, user2_analysis)
+    # end
     
-    # Combine metrics with weights (adjusted for Last.fm data)
-    overall_score = (artist_similarity * 0.4) + (track_similarity * 0.4) + (genre_similarity * 0.2)
+    # # Combine metrics with weights (adjusted for Last.fm data)
+    # overall_score = (artist_similarity * 0.4) + (track_similarity * 0.4) + (genre_similarity * 0.2)
     
-    # Return score as percentage
-    (overall_score * 100).round(1)
+    # # Return score as percentage
+    # (overall_score * 100).round(1)
   end
   
   # Calculate compatibility using user embeddings

@@ -429,18 +429,87 @@ class User < ApplicationRecord
     cached_recommendations = Rails.cache.read(cache_key)
     return cached_recommendations if cached_recommendations.present?
 
-    # If we have no friends, use our own top tracks as recommendations
+    # If we have no friends, use our own embedding-based recommendations
     if friends.empty?
-      Rails.logger.info("No friends found, using own top tracks as recommendations")
-      result = get_top_tracks(limit: limit)
+      Rails.logger.info("No friends found, using own embedding-based recommendations")
+      result = MusicRecommendationService.get_embedding_recommendations_for_user(self, limit: limit)
       # Cache the result
       Rails.cache.write(cache_key, result, expires_in: 1.day) if result.present?
       return result
     end
 
-    # Try to get recommendations from friends' top tracks
+    # Try to get recommendations based on combined friend embeddings
     begin
-      # FALLBACK APPROACH: Get friends' top tracks directly
+      # Collect embeddings from friends who have them
+      friend_embeddings = friends.map(&:embedding).compact
+      
+      # If none of the friends have embeddings, fall back to traditional method
+      if friend_embeddings.empty?
+        Rails.logger.info("No friend embeddings found, falling back to traditional method")
+        return fallback_friend_recommendations(limit)
+      end
+      
+      # Add our own embedding if available
+      if self.embedding.present?
+        friend_embeddings << self.embedding
+      else
+        # Try to generate our embedding
+        UserEmbeddingService.update_embedding_for(self)
+        friend_embeddings << self.embedding if self.embedding.present?
+      end
+      
+      # Calculate average embedding from all friends (and possibly self)
+      avg_embedding = UserEmbeddingService.calculate_average_embedding(friend_embeddings)
+      
+      if avg_embedding.nil?
+        Rails.logger.info("Could not calculate average embedding, falling back to traditional method")
+        return fallback_friend_recommendations(limit)
+      end
+      
+      # Create a temporary user object with the average embedding to use with the recommendation service
+      temp_user = User.new
+      temp_user.embedding = avg_embedding
+      
+      # Get recommendations using the combined embedding
+      result = MusicRecommendationService.get_track_recommendations_by_embedding(temp_user, limit)
+      
+      # If we didn't get enough recommendations, fall back to traditional method
+      if result.empty? || result.size < limit / 2
+        Rails.logger.info("Not enough embedding-based recommendations, falling back to traditional method")
+        traditional_results = fallback_friend_recommendations(limit - result.size)
+        
+        # Combine results, removing duplicates
+        all_track_ids = result.map { |t| t[:id] }
+        traditional_results.each do |track|
+          unless all_track_ids.include?(track[:id])
+            result << track
+            all_track_ids << track[:id]
+            break if result.size >= limit
+          end
+        end
+      end
+      
+      # Format result
+      formatted_result = {
+        'tracks' => result
+      }
+      
+      # Cache the result
+      Rails.cache.write(cache_key, formatted_result, expires_in: 1.day) if formatted_result.present?
+      
+      formatted_result
+    rescue => e
+      Rails.logger.error("Error in friend_based_recommendations: #{e.message}")
+      
+      # Last resort: fall back to traditional method
+      Rails.logger.info("Embedding approach failed, falling back to traditional method")
+      fallback_friend_recommendations(limit)
+    end
+  end
+  
+  # Traditional method for friend-based recommendations as a fallback
+  def fallback_friend_recommendations(limit)
+    begin
       Rails.logger.info("Using fallback for recommendations: returning friends' top tracks")
       
       all_friend_tracks = friends.flat_map do |friend| 
@@ -482,16 +551,20 @@ class User < ApplicationRecord
         end
       end
       
-      # Cache the result
-      Rails.cache.write(cache_key, result, expires_in: 1.day) if result.present?
+      # Format result
+      formatted_result = {
+        'tracks' => result
+      }
       
-      result
+      formatted_result
     rescue => e
-      Rails.logger.error("Error in friend_based_recommendations: #{e.message}")
+      Rails.logger.error("Error in fallback_friend_recommendations: #{e.message}")
       
       # Last resort: return our own top tracks
       Rails.logger.info("Fallback failed, using own top tracks as last resort")
-      get_top_tracks(limit: limit)
+      {
+        'tracks' => get_top_tracks(limit: limit)
+      }
     end
   end
   

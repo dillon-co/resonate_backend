@@ -140,86 +140,110 @@ class MusicRecommendationService
   
   # Get track recommendations using embedding similarity
   def self.get_track_recommendations_by_embedding(user, limit)
+    Rails.logger.info "Getting track recommendations by embedding for user #{user.id}"
     # Get user's existing track IDs to exclude
-    user_track_ids = user.tracks.pluck(:id)
+    user_track_ids = user.track_ids # Use association directly
     
-    # Find tracks with embeddings
-    tracks_with_embeddings = TrackFeature.where.not(embedding: nil)
-                                        .where.not(track_id: user_track_ids)
-                                        .includes(:track)
+    # Find tracks with embeddings, excluding those the user already has
+    tracks_with_embeddings = TrackFeature.includes(:track).where.not(embedding: nil)
+    tracks_with_embeddings = tracks_with_embeddings.where.not(track_id: user_track_ids) if user_track_ids.present?
     
-    return [] if tracks_with_embeddings.empty?
+    return [] if tracks_with_embeddings.empty? || user.embedding.blank?
     
-    # Create a Neighbor index with track embeddings
-    track_index = Neighbor::Index.new(dimensions: user.embedding.size, metric: :cosine)
-    
-    # Add track embeddings to the index
-    tracks_with_embeddings.each do |track_feature|
-      track_index.add(track_feature.id, track_feature.embedding)
+    # Calculate similarities
+    similarities = tracks_with_embeddings.map do |track_feature|
+      similarity = cosine_similarity(user.embedding, track_feature.embedding)
+      { feature: track_feature, similarity: similarity }
     end
     
-    # Find nearest neighbors
-    nearest_neighbors = track_index.nearest_neighbors(user.embedding, k: limit * 2)
+    # Sort by similarity (descending)
+    sorted_tracks = similarities.sort_by { |item| -item[:similarity] }
     
-    # Convert to track objects
+    # Convert to track objects and take limit
     recommended_tracks = []
-    nearest_neighbors.each do |neighbor_id, _distance|
-      track_feature = tracks_with_embeddings.find { |tf| tf.id == neighbor_id }
-      next unless track_feature&.track
-      
+    sorted_tracks.take(limit).each do |item|
+      track_feature = item[:feature]
       track = track_feature.track
+      next unless track
+      
       recommended_tracks << {
         id: track.spotify_id,
         name: track.song_name,
         artist: track.artist,
         album_art_url: track.image_url,
-        popularity: 0, # We don't have this data, so default to 0
-        preview_url: nil, # We don't have this data
+        popularity: track.popularity || 0, # Use stored popularity if available
+        preview_url: track.preview_url, # Use stored preview URL if available
         uri: "spotify:track:#{track.spotify_id}"
       }
-      
-      break if recommended_tracks.size >= limit
     end
     
+    Rails.logger.info "Found #{recommended_tracks.size} track recommendations for user #{user.id}"
     recommended_tracks
   end
   
   # Get artist recommendations using embedding similarity
   def self.get_artist_recommendations_by_embedding(user, limit)
+    Rails.logger.info "Getting artist recommendations by embedding for user #{user.id}"
     # Get user's existing artist IDs to exclude
-    user_artist_ids = user.artists.pluck(:id)
+    user_artist_ids = user.artist_ids # Use the association directly
     
-    # Find artists with embeddings
-    artists_with_embeddings = ArtistFeature.where.not(embedding: nil)
-                                          .where.not(artist_id: user_artist_ids)
-                                          .includes(:artist)
+    # Find artists with embeddings, excluding those the user already follows/listens to
+    artists_with_embeddings = ArtistFeature.includes(:artist).where.not(embedding: nil)
+    artists_with_embeddings = artists_with_embeddings.where.not(artist_id: user_artist_ids) if user_artist_ids.present?
     
-    return [] if artists_with_embeddings.empty?
+    return [] if artists_with_embeddings.empty? || user.embedding.blank?
     
-    # Create a Neighbor index with artist embeddings
-    artist_index = Neighbor::Index.new(dimensions: user.embedding.size, metric: :cosine)
-    
-    # Add artist embeddings to the index
-    artists_with_embeddings.each do |artist_feature|
-      artist_index.add(artist_feature.id, artist_feature.embedding)
+    # Calculate similarities
+    similarities = artists_with_embeddings.map do |artist_feature|
+      similarity = cosine_similarity(user.embedding, artist_feature.embedding)
+      { feature: artist_feature, similarity: similarity }
     end
     
-    # Find nearest neighbors
-    nearest_neighbors = artist_index.nearest_neighbors(user.embedding, k: limit * 2)
+    # Sort by similarity (descending)
+    sorted_artists = similarities.sort_by { |item| -item[:similarity] }
     
-    # Convert to artist objects
+    # Convert to artist objects and take limit
     recommended_artists = []
-    nearest_neighbors.each do |neighbor_id, _distance|
-      artist_feature = artists_with_embeddings.find { |af| af.id == neighbor_id }
-      next unless artist_feature&.artist
-      
+    sorted_artists.take(limit).each do |item|
+      artist_feature = item[:feature]
       artist = artist_feature.artist
-      recommended_artists << artist
+      next unless artist
       
-      break if recommended_artists.size >= limit
+      recommended_artists << {
+        id: artist.spotify_id,
+        name: artist.artist_name
+        # Add other fields if needed, e.g., image_url from artist model
+      }
     end
     
+    Rails.logger.info "Found #{recommended_artists.size} artist recommendations for user #{user.id}"
     recommended_artists
+  end
+  
+  # Helper method for cosine similarity (copied from MusicCompatibilityService)
+  def self.cosine_similarity(vec1, vec2)
+    return 0 unless vec1.is_a?(Array) && vec2.is_a?(Array) && vec1.size == vec2.size && vec1.size > 0
+
+    dot_product = 0
+    norm1 = 0
+    norm2 = 0
+
+    vec1.zip(vec2).each do |v1, v2|
+      # Ensure values are numeric
+      v1_num = v1.to_f
+      v2_num = v2.to_f
+      
+      dot_product += v1_num * v2_num
+      norm1 += v1_num**2
+      norm2 += v2_num**2
+    end
+
+    return 0 if norm1 == 0 || norm2 == 0
+
+    similarity = dot_product / (Math.sqrt(norm1) * Math.sqrt(norm2))
+    
+    # Clamp similarity to range [-1, 1] to avoid potential floating point issues
+    [[similarity, -1.0].max, 1.0].min 
   end
   
   # Get top tracks from a list of artists

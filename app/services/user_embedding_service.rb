@@ -21,21 +21,12 @@ class UserEmbeddingService
                                   .where.not(embedding: nil)
                                   .pluck(:embedding)
     
-    # Calculate average embeddings for each type if available
-    avg_track_embedding = calculate_average_embedding(track_embeddings) if track_embeddings.any?
-    avg_artist_embedding = calculate_average_embedding(artist_embeddings) if artist_embeddings.any?
-    avg_album_embedding = calculate_average_embedding(album_embeddings) if album_embeddings.any?
-    
-    # Combine all available embeddings with equal weighting
-    available_embeddings = [
-      avg_track_embedding,
-      avg_artist_embedding,
-      avg_album_embedding
-    ].compact
-    
-    # Calculate the final user embedding (average of all type averages)
-    user_embedding = calculate_average_embedding(available_embeddings) if available_embeddings.any?
-    
+    # Combine all item embeddings into a single list
+    all_embeddings = track_embeddings + artist_embeddings + album_embeddings
+
+    # Calculate the final user embedding (average of all item embeddings)
+    user_embedding = calculate_average_embedding(all_embeddings) if all_embeddings.any?
+
     # Save the embedding to the user model if we have one
     if user_embedding
       # Assuming user has an embedding field

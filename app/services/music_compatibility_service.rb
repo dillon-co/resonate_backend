@@ -101,25 +101,28 @@ class MusicCompatibilityService
     score
   end
   
-  # Calculate cosine similarity between two vectors
+  # Calculate cosine similarity between two vectors (pure Ruby implementation)
   def self.cosine_similarity(vec1, vec2)
-    # Use the Neighbor gem's cosine distance and convert to similarity
-    # Cosine distance = 1 - cosine similarity, so similarity = 1 - distance
-    return 0 unless vec1.is_a?(Array) && vec2.is_a?(Array) && vec1.size == vec2.size
-    
-    # Create a temporary index with just one vector
-    index = Neighbor::Index.new(dimensions: vec1.size, metric: :cosine)
-    index.add(1, vec1)
-    
-    # Find the nearest neighbor (which will be the only one in the index)
-    nearest = index.nearest_neighbors(vec2, k: 1)
-    
-    # If no neighbors found (shouldn't happen), return 0
-    return 0 if nearest.empty?
-    
-    # Convert distance to similarity (cosine distance = 1 - cosine similarity)
-    # nearest[0][1] contains the distance
-    1 - nearest[0][1]
+    return 0 unless vec1.is_a?(Array) && vec2.is_a?(Array) && vec1.size == vec2.size && vec1.size > 0
+
+    dot_product = 0
+    norm1 = 0
+    norm2 = 0
+    vec1.zip(vec2).each do |v1, v2|
+      # Ensure v1 and v2 are numeric before calculation
+      next unless v1.is_a?(Numeric) && v2.is_a?(Numeric)
+      dot_product += v1 * v2
+      norm1 += v1 * v1
+      norm2 += v2 * v2
+    end
+
+    # Handle cases where norms are zero (e.g., zero vectors)
+    return 0 if norm1 == 0 || norm2 == 0
+
+    similarity = dot_product / (Math.sqrt(norm1) * Math.sqrt(norm2))
+
+    # Clamp result to [-1, 1] to handle potential floating-point inaccuracies
+    [[similarity, -1.0].max, 1.0].min
   end
   
   private

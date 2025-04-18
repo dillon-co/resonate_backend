@@ -1,10 +1,13 @@
 Sidekiq.configure_server do |config|
-    config.redis = { ssl_params: { verify_mode: OpenSSL::SSL::VERIFY_NONE } }
-    config.redis = { url: ENV['REDISCLOUD_URL'] }
+  config.redis = { 
+    url: ENV['REDIS_URL'] || ENV['REDISCLOUD_URL'] || 'redis://localhost:6379',
+    ssl_params: { verify_mode: OpenSSL::SSL::VERIFY_NONE } 
+  }
 end
 
 Sidekiq.configure_client do |config|
-    config.redis = { ssl_params: { verify_mode: OpenSSL::SSL::VERIFY_NONE } }
-    config.redis = { url: ENV['REDISCLOUD_URL'] }
-  end
-
+  config.redis = { 
+    url: ENV['REDIS_URL'] || ENV['REDISCLOUD_URL'] || 'redis://localhost:6379',
+    ssl_params: { verify_mode: OpenSSL::SSL::VERIFY_NONE } 
+  }
+end

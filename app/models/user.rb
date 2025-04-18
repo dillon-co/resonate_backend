@@ -446,7 +446,7 @@ class User < ApplicationRecord
       # If none of the friends have embeddings, fall back to traditional method
       if friend_embeddings.empty?
         Rails.logger.info("No friend embeddings found, falling back to traditional method")
-        return fallback_friend_recommendations(limit)
+        return traditional_friend_recommendations(limit)
       end
       
       # Add our own embedding if available
@@ -459,11 +459,11 @@ class User < ApplicationRecord
       end
       
       # Calculate average embedding from all friends (and possibly self)
-      avg_embedding = UserEmbeddingService.calculate_average_embedding(friend_embeddings)
+      avg_embedding = UserEmbeddingService.send(:calculate_average_embedding, friend_embeddings)
       
       if avg_embedding.nil?
         Rails.logger.info("Could not calculate average embedding, falling back to traditional method")
-        return fallback_friend_recommendations(limit)
+        return traditional_friend_recommendations(limit)
       end
       
       # Create a temporary user object with the average embedding to use with the recommendation service
@@ -476,11 +476,11 @@ class User < ApplicationRecord
       # If we didn't get enough recommendations, fall back to traditional method
       if result.empty? || result.size < limit / 2
         Rails.logger.info("Not enough embedding-based recommendations, falling back to traditional method")
-        traditional_results = fallback_friend_recommendations(limit - result.size)
+        traditional_results = traditional_friend_recommendations(limit - result.size)
         
         # Combine results, removing duplicates
         all_track_ids = result.map { |t| t[:id] }
-        traditional_results.each do |track|
+        traditional_results['tracks'].each do |track|
           unless all_track_ids.include?(track[:id])
             result << track
             all_track_ids << track[:id]
@@ -503,14 +503,14 @@ class User < ApplicationRecord
       
       # Last resort: fall back to traditional method
       Rails.logger.info("Embedding approach failed, falling back to traditional method")
-      fallback_friend_recommendations(limit)
+      traditional_friend_recommendations(limit)
     end
   end
   
   # Traditional method for friend-based recommendations as a fallback
-  def fallback_friend_recommendations(limit)
+  private def traditional_friend_recommendations(limit)
     begin
-      Rails.logger.info("Using fallback for recommendations: returning friends' top tracks")
+      Rails.logger.info("Using traditional method for recommendations: returning friends' top tracks")
       
       all_friend_tracks = friends.flat_map do |friend| 
         begin
@@ -534,7 +534,7 @@ class User < ApplicationRecord
             []
           end
         rescue => e
-          Rails.logger.error("Error in fallback getting friend tracks: #{e.message}")
+          Rails.logger.error("Error in traditional method getting friend tracks: #{e.message}")
           []
         end
       end
@@ -558,10 +558,10 @@ class User < ApplicationRecord
       
       formatted_result
     rescue => e
-      Rails.logger.error("Error in fallback_friend_recommendations: #{e.message}")
+      Rails.logger.error("Error in traditional_friend_recommendations: #{e.message}")
       
       # Last resort: return our own top tracks
-      Rails.logger.info("Fallback failed, using own top tracks as last resort")
+      Rails.logger.info("Traditional method failed, using own top tracks as last resort")
       {
         'tracks' => get_top_tracks(limit: limit)
       }

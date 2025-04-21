@@ -69,6 +69,7 @@ class User < ApplicationRecord
         new_track.song_name = track_data[:name]
         new_track.artist = track_data[:artist]
         new_track.image_url = track_data[:album_art_url]
+        new_track.preview_url = track_data[:preview_url]
       end
       
       # Find or create the user_track association

@@ -761,7 +761,9 @@ class MusicAnalysisService
   def self.extract_features_from_deezer(track_data)
     features = default_features
     
-    # Extract available data    
+    # Extract available data
+    features[:popularity] = calculate_popularity(track_data['rank']) if track_data['rank']
+    
     # Extract genre if available
     if track_data['album'] && track_data['album']['id']
       album_data = get_detailed_album_data(track_data['album']['id'])

@@ -275,7 +275,8 @@ class MusicAnalysisService
       emotion: emotion_from_mood(features[:mood]),
       emotional_dynamics: emotional_dynamics_from_features(features),
       instruments: instruments_from_features(features),
-      length: features[:duration_ms] ? features[:duration_ms] / 1000.0 : nil
+      length: features[:duration_ms] ? features[:duration_ms] / 1000.0 : nil,
+      popularity: features[:rank] || 0 # Add popularity from Deezer rank
     )
     
     track_feature.save
@@ -294,7 +295,8 @@ class MusicAnalysisService
       instruments: instruments_from_features(features)&.first(3)&.join(", "),
       mood: mood_to_string(features[:mood]),
       themes: themes_from_genres(features[:genres]),
-      energy_level: energy_level_from_features(features)
+      energy_level: energy_level_from_features(features),
+      popularity: features[:nb_fan] || 0 # Add popularity from Deezer nb_fan
     )
     
     artist_feature.save
@@ -314,7 +316,8 @@ class MusicAnalysisService
       mood: mood_to_string(features[:mood]),
       themes: themes_from_genres(features[:genres]),
       num_tracks: features[:nb_tracks],
-      length: features[:duration] ? features[:duration] / 60.0 : nil # Convert to minutes
+      length: features[:duration] ? features[:duration] / 60.0 : nil, # Convert to minutes
+      popularity: features[:fans] || 0 # Add popularity from Deezer fans
     )
     
     album_feature.save
@@ -538,6 +541,7 @@ class MusicAnalysisService
           bpm: data['bpm'],
           explicit_lyrics: data['explicit_lyrics'],
           preview_url: data['preview'],
+          rank: data['rank'], # Extract Deezer rank for popularity
           album: {
             id: data['album']['id'],
             title: data['album']['title'],
@@ -577,7 +581,7 @@ class MusicAnalysisService
           link: artist_data['link'],
           picture: artist_data['picture_xl'],
           nb_album: artist_data['nb_album'],
-          nb_fan: artist_data['nb_fan'],
+          nb_fan: artist_data['nb_fan'], # Extract Deezer nb_fan for popularity
           radio: artist_data['radio'],
           tracklist: artist_data['tracklist'],
           top_tracks: top_tracks,
@@ -679,7 +683,7 @@ class MusicAnalysisService
           label: album_data['label'],
           nb_tracks: album_data['nb_tracks'],
           duration: album_data['duration'],
-          fans: album_data['fans'],
+          fans: album_data['fans'], # Extract Deezer fans for popularity
           release_date: album_data['release_date'],
           tracks: tracks,
           artist: {

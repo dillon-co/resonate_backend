@@ -171,7 +171,7 @@ class MusicRecommendationService
         name: track.song_name,
         artist: track.artist,
         album_art_url: track.image_url,
-        popularity: track.popularity || 0, # Use stored popularity if available
+        popularity: track_feature.popularity || 0, # Use popularity from TrackFeature
         preview_url: track.preview_url, # Use stored preview URL if available
         uri: "spotify:track:#{track.spotify_id}"
       }

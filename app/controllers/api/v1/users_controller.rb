@@ -139,10 +139,13 @@ class Api::V1::UsersController < ApplicationController
   
   def music_recommendations
     # Get music recommendations based on friends' listening habits
-    recommendations = Current.user.friend_based_recommendations(limit: params[:limit]&.to_i || 20)
+    recommendations_hash = Current.user.friend_based_recommendations(limit: params[:limit]&.to_i || 20)
+    
+    # Access the 'tracks' array from the hash
+    recommendation_tracks = recommendations_hash['tracks'] || []
     
     # Format the response
-    formatted_recommendations = recommendations.map do |track|
+    formatted_recommendations = recommendation_tracks.map do |track|
       # Handle different track formats
       if track.is_a?(Hash) && track[:id].present?
         # Handle format from our fallback mechanism (symbol keys)

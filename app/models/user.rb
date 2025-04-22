@@ -573,12 +573,12 @@ class User < ApplicationRecord
   
   # Get genre breakdown of user's music taste
   def genre_breakdown
-    artists_response = get_top_artists(limit: 50)
-    artists = artists_response && artists_response['items'] ? artists_response['items'] : []
+    # Fetch top artists for the long term
+    artists = get_top_artists(time_range: 'long_term', limit: 50)
     return {} if artists.empty?
     
-    # Collect all genres from top artists
-    genres = artists.flat_map { |artist| artist['genres'] || [] }
+    # Collect all genres from top artists (using symbol key)
+    genres = artists.flat_map { |artist| artist[:genres] || [] }
     
     # Count occurrences
     genre_counts = Hash.new(0)

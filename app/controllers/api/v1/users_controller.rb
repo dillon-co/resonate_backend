@@ -74,29 +74,36 @@ class Api::V1::UsersController < ApplicationController
       
       # Add Spotify data if the user has connected their account
       if user.spotify_access_token.present?
-        # Get top tracks and artists
+        profile_data[:spotify_connected] = true
         begin
-          # The get_top_tracks and get_top_artists methods now return formatted arrays
-          # not the raw Spotify API response
-          top_tracks = user.get_top_tracks(limit: 10)
-          top_artists = user.get_top_artists(limit: 10)
+          # Fetch top tracks, artists, and genres using cache
+          profile_data[:top_tracks] = Rails.cache.fetch("user:#{user.id}:top_tracks:short_term", expires_in: 1.hour) do
+            user.get_top_tracks(limit: 10) # Keep existing limit for now
+          end
+          profile_data[:top_artists] = Rails.cache.fetch("user:#{user.id}:top_artists:short_term", expires_in: 1.hour) do
+            user.get_top_artists(limit: 10) # Keep existing limit for now
+          end
           
-          # Ensure we have arrays even if the methods return nil
-          top_tracks = [] unless top_tracks.is_a?(Array)
-          top_artists = [] unless top_artists.is_a?(Array)
+          # Fetch favorite genres
+          genre_data = Rails.cache.fetch("user:#{user.id}:genre_breakdown", expires_in: 1.hour) do
+            user.genre_breakdown
+          end
+          profile_data[:favorite_genres] = genre_data.keys.take(5) # Get top 5 genre names
+          
+          # Ensure we have arrays even if the methods return nil or cache misses occur
+          profile_data[:top_tracks] ||= []
+          profile_data[:top_artists] ||= []
+          profile_data[:favorite_genres] ||= [] # Ensure it's an array on error/miss
           
           # Log for debugging
-          Rails.logger.info("User #{user.id} top tracks: #{top_tracks.size} items")
-          Rails.logger.info("User #{user.id} top artists: #{top_artists.size} items")
+          Rails.logger.info("User #{user.id} show_profile - Tracks: #{profile_data[:top_tracks].size}, Artists: #{profile_data[:top_artists].size}, Genres: #{profile_data[:favorite_genres].size}")
           
-          profile_data[:spotify_connected] = true
-          profile_data[:top_tracks] = top_tracks
-          profile_data[:top_artists] = top_artists
         rescue => e
-          Rails.logger.error("Error fetching Spotify data for user #{user.id}: #{e.message}")
-          profile_data[:spotify_connected] = true
+          Rails.logger.error("Error fetching Spotify data for user #{user.id} in show_profile: #{e.message}")
+          # Reset on error
           profile_data[:top_tracks] = []
           profile_data[:top_artists] = []
+          profile_data[:favorite_genres] = []
           profile_data[:spotify_error] = "Could not fetch music data"
         end
       else

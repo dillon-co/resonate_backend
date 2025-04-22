@@ -237,4 +237,56 @@ class Api::V1::UsersController < ApplicationController
       # Add other relevant track details if needed
     }
   end
+  
+  def user_profile_data(user, requester = nil)
+    data = {
+      id: user.id,
+      display_name: user.display_name,
+      profile_photo_url: user.profile_photo_url,
+      spotify_connected: user.spotify_access_token.present?,
+      anthem_track: format_track(user.anthem_track) # Add formatted anthem track
+    }
+
+    # Only include sensitive or extended data if requester is the user themselves or a friend
+    can_view_details = requester.nil? || requester == user || requester.is_friend_with?(user)
+
+    if can_view_details && user.spotify_access_token.present?
+      begin
+        # Fetch data only if allowed and connected
+        # Use cached data if available, otherwise fetch fresh
+        # Note: Consider moving API calls to background jobs or services for better performance
+        data[:top_artists] = Rails.cache.fetch("user:#{user.id}:top_artists:short_term", expires_in: 1.hour) do
+          user.get_top_artists(limit: 9)
+        end
+        data[:top_tracks] = Rails.cache.fetch("user:#{user.id}:top_tracks:short_term", expires_in: 1.hour) do
+          user.get_top_tracks(limit: 5)
+        end
+        
+        # Add favorite genres (top 5)
+        genre_data = Rails.cache.fetch("user:#{user.id}:genre_breakdown", expires_in: 1.hour) do
+          user.genre_breakdown
+        end
+        data[:favorite_genres] = genre_data.keys.take(5) # Get top 5 genre names
+        
+        # Add compatibility score if viewing another user's profile
+        if requester && requester != user
+          data[:compatibility] = requester.musical_compatibility_with(user)
+        end
+        
+      rescue => e
+        Rails.logger.error "Error fetching Spotify data for user #{user.id} in profile: #{e.message}"
+        # Return basic data even if Spotify fetch fails
+        data[:top_artists] = [] # Default to empty array on error
+        data[:top_tracks] = []  # Default to empty array on error
+        data[:favorite_genres] = [] # Default to empty array on error
+      end
+    else
+      # Set defaults if user cannot view details or not connected
+      data[:top_artists] = []
+      data[:top_tracks] = []
+      data[:favorite_genres] = []
+    end
+
+    data
+  end
 end

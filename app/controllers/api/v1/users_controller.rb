@@ -20,11 +20,19 @@ class Api::V1::UsersController < ApplicationController
     render json: user
   end
   
+  # GET /api/v1/users/:id
+  # Returns detailed profile data for a specific user
   def show
-    # Eager load anthem track
-    current_user_with_anthem = User.includes(:anthem_track).find(Current.user.id)
-    
-    render json: user_with_compatibility_and_anthem(current_user_with_anthem)
+    # Find the user whose profile is being requested
+    target_user = User.includes(:anthem_track).find_by(id: params[:id])
+
+    if target_user
+      # Pass the target user and the current user (requester) to the helper
+      profile_data = user_profile_data(target_user, Current.user)
+      render json: profile_data
+    else
+      render json: { error: "User not found" }, status: :not_found
+    end
   end
 
   def current_with_role

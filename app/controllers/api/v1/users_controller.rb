@@ -54,66 +54,99 @@ class Api::V1::UsersController < ApplicationController
 
   def show_profile
     user = User.find_by(id: params[:id])
-    
-    if user
-      # Eager load anthem track
-      user_with_anthem = User.includes(:anthem_track).find(params[:id])
-      
-      # Include compatibility data if viewing another user's profile
-      profile_data = if user.id != Current.user.id
-                       user_with_compatibility_and_anthem(user_with_anthem)
-                     else
-                       # If viewing own profile, no need to calculate compatibility
-                       {
-                         id: user.id,
-                         display_name: user.display_name,
-                         profile_photo_url: user.profile_photo_url,
-                         anthem_track: format_track(user.anthem_track)
-                       }
-                     end
-      
-      # Add Spotify data if the user has connected their account
-      if user.spotify_access_token.present?
-        profile_data[:spotify_connected] = true
-        begin
-          # Fetch top tracks, artists, and genres using cache
-          profile_data[:top_tracks] = Rails.cache.fetch("user:#{user.id}:top_tracks:short_term", expires_in: 1.hour) do
-            user.get_top_tracks(limit: 10) # Keep existing limit for now
-          end
-          profile_data[:top_artists] = Rails.cache.fetch("user:#{user.id}:top_artists:short_term", expires_in: 1.hour) do
-            user.get_top_artists(limit: 10) # Keep existing limit for now
-          end
-          
-          # Fetch favorite genres
-          genre_data = Rails.cache.fetch("user:#{user.id}:genre_breakdown", expires_in: 1.hour) do
-            user.genre_breakdown
-          end
-          profile_data[:favorite_genres] = genre_data.keys.take(5) # Get top 5 genre names
-          
-          # Ensure we have arrays even if the methods return nil or cache misses occur
-          profile_data[:top_tracks] ||= []
-          profile_data[:top_artists] ||= []
-          profile_data[:favorite_genres] ||= [] # Ensure it's an array on error/miss
-          
-          # Log for debugging
-          Rails.logger.info("User #{user.id} show_profile - Tracks: #{profile_data[:top_tracks].size}, Artists: #{profile_data[:top_artists].size}, Genres: #{profile_data[:favorite_genres].size}")
-          
-        rescue => e
-          Rails.logger.error("Error fetching Spotify data for user #{user.id} in show_profile: #{e.message}")
-          # Reset on error
-          profile_data[:top_tracks] = []
-          profile_data[:top_artists] = []
-          profile_data[:favorite_genres] = []
-          profile_data[:spotify_error] = "Could not fetch music data"
-        end
-      else
-        profile_data[:spotify_connected] = false
-      end
-      
-      render json: profile_data
+    return render json: { error: "User not found" }, status: :not_found unless user
+
+    # Eager load anthem track for the user being viewed
+    user = User.includes(:anthem_track).find(params[:id]) # Re-find with includes
+
+    profile_data = {}
+
+    # --- Base Profile Data ---
+    if user.id != Current.user.id
+      # Calculate compatibility if viewing another user
+      # Ensure this helper doesn't overwrite spotify data we add later
+      profile_data = user_with_compatibility_and_anthem(user)
     else
-      render json: { error: "User not found" }, status: :not_found
+      # Basic data if viewing own profile
+      profile_data = {
+        id: user.id,
+        display_name: user.display_name,
+        profile_photo_url: user.profile_photo_url,
+        anthem_track: format_track(user.anthem_track) # Assuming format_track helper exists
+      }
     end
+
+    # --- Augment with Spotify Data (for viewed user) ---
+    profile_data[:spotify_connected] = user.spotify_access_token.present?
+    # Initialize Spotify data keys with defaults
+    profile_data[:top_tracks] = []
+    profile_data[:top_artists] = []
+    profile_data[:favorite_genres] = []
+    profile_data[:mutual_artists] = [] # Initialize mutual artists array
+
+    if profile_data[:spotify_connected]
+      begin
+        # Fetch viewed user's Spotify data using cache
+        user_top_tracks = Rails.cache.fetch("user:#{user.id}:top_tracks:short_term", expires_in: 1.hour) do
+          user.get_top_tracks(limit: 10)
+        end
+        # Fetch more artists for the viewed user to improve potential for mutuals later
+        user_top_artists = Rails.cache.fetch("user:#{user.id}:top_artists:medium_term", expires_in: 1.hour) do
+          user.get_top_artists(limit: 50, time_range: 'medium_term') # Fetch 50 medium term
+        end
+        genre_data = Rails.cache.fetch("user:#{user.id}:genre_breakdown", expires_in: 1.hour) do
+          user.genre_breakdown
+        end
+
+        # Assign fetched data, ensuring arrays even if cache returns nil
+        profile_data[:top_tracks] = user_top_tracks&.take(10) || [] # Only show top 10 tracks
+        profile_data[:top_artists] = user_top_artists&.take(10) || [] # Only show top 10 artists initially
+        profile_data[:favorite_genres] = genre_data&.keys&.take(5) || []
+
+        # --- Calculate Mutual Artists (only if viewing another profile & current user connected) ---
+        if user.id != Current.user.id && Current.user.spotify_access_token.present? && user_top_artists.present?
+          begin
+            # Fetch current user's top artists using cache (also fetch more)
+            current_user_top_artists = Rails.cache.fetch("user:#{Current.user.id}:top_artists:medium_term", expires_in: 1.hour) do
+              Current.user.get_top_artists(limit: 50, time_range: 'medium_term')
+            end
+
+            if current_user_top_artists.present?
+              # Extract unique artist IDs (assuming objects/hashes have an `id` or `spotify_id`)
+              # Adjust `.id` if the actual attribute name is different (e.g., `.spotify_id`)
+              user_artist_ids = user_top_artists.map { |a| a.try(:id) || a[:id] }.compact.uniq
+              current_user_artist_ids = current_user_top_artists.map { |a| a.try(:id) || a[:id] }.compact.uniq
+
+              mutual_artist_ids = user_artist_ids & current_user_artist_ids
+
+              # Get the details of the mutual artists from the viewed user's fetched list
+              mutual_artists_data = user_top_artists.select { |a| mutual_artist_ids.include?(a.try(:id) || a[:id]) }
+
+              # Limit to 3
+              profile_data[:mutual_artists] = mutual_artists_data.take(3)
+            end
+          rescue => e
+            Rails.logger.error("Error fetching/calculating mutual artists for user #{user.id} vs current_user #{Current.user.id}: #{e.message}")
+            # Keep profile_data[:mutual_artists] as []
+          end
+        end
+        # --- End Mutual Artists Calculation ---
+
+        # Log counts after all calculations
+        Rails.logger.info("User #{user.id} show_profile - Tracks: #{profile_data[:top_tracks].size}, Artists: #{profile_data[:top_artists].size}, Genres: #{profile_data[:favorite_genres].size}, Mutual: #{profile_data[:mutual_artists].size}")
+
+      rescue => e
+        Rails.logger.error("Error fetching Spotify data for user #{user.id} in show_profile: #{e.message}")
+        profile_data[:spotify_error] = "Could not fetch music data"
+        # Ensure arrays are empty on error; mutual_artists already defaulted to []
+        profile_data[:top_tracks] = []
+        profile_data[:top_artists] = []
+        profile_data[:favorite_genres] = []
+        profile_data[:mutual_artists] = [] # Explicitly reset here too for safety
+      end
+    end
+
+    render json: profile_data
   end
 
   def user_top_tracks

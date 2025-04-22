@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2025_04_21_193236) do
+ActiveRecord::Schema[8.0].define(version: 2025_04_22_163753) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "vector"
@@ -170,6 +170,8 @@ ActiveRecord::Schema[8.0].define(version: 2025_04_21_193236) do
     t.datetime "spotify_token_expires_at"
     t.integer "role", default: 0
     t.vector "embedding", limit: 1536
+    t.bigint "anthem_track_id"
+    t.index ["anthem_track_id"], name: "index_users_on_anthem_track_id"
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
   end
 
@@ -186,4 +188,5 @@ ActiveRecord::Schema[8.0].define(version: 2025_04_21_193236) do
   add_foreign_key "user_artists", "users"
   add_foreign_key "user_tracks", "tracks"
   add_foreign_key "user_tracks", "users"
+  add_foreign_key "users", "tracks", column: "anthem_track_id"
 end

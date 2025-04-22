@@ -21,8 +21,10 @@ class Api::V1::UsersController < ApplicationController
   end
   
   def show
-    user = Current.user
-    render json: user_with_compatibility(user)
+    # Eager load anthem track
+    current_user_with_anthem = User.includes(:anthem_track).find(Current.user.id)
+    
+    render json: user_with_compatibility_and_anthem(current_user_with_anthem)
   end
 
   def current_with_role
@@ -46,15 +48,19 @@ class Api::V1::UsersController < ApplicationController
     user = User.find_by(id: params[:id])
     
     if user
+      # Eager load anthem track
+      user_with_anthem = User.includes(:anthem_track).find(params[:id])
+      
       # Include compatibility data if viewing another user's profile
       profile_data = if user.id != Current.user.id
-                       user_with_compatibility(user)
+                       user_with_compatibility_and_anthem(user_with_anthem)
                      else
                        # If viewing own profile, no need to calculate compatibility
                        {
                          id: user.id,
                          display_name: user.display_name,
-                         profile_photo_url: user.profile_photo_url
+                         profile_photo_url: user.profile_photo_url,
+                         anthem_track: format_track(user.anthem_track)
                        }
                      end
       
@@ -206,6 +212,29 @@ class Api::V1::UsersController < ApplicationController
       display_name: user.display_name,
       profile_photo_url: user.profile_photo_url,
       compatibility: Current.user.musical_compatibility_with(user)
+    }
+  end
+  
+  def user_with_compatibility_and_anthem(user)
+    {
+      id: user.id,
+      display_name: user.display_name,
+      profile_photo_url: user.profile_photo_url,
+      compatibility: Current.user.musical_compatibility_with(user),
+      anthem_track: format_track(user.anthem_track)
+    }
+  end
+  
+  def format_track(track)
+    return nil unless track
+    {
+      id: track.id,
+      name: track.song_name,
+      artist: track.artist,
+      album_art_url: track.image_url,
+      spotify_id: track.spotify_id,
+      preview_url: track.preview_url
+      # Add other relevant track details if needed
     }
   end
 end

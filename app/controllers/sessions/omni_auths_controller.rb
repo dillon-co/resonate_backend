@@ -69,6 +69,9 @@ class Sessions::OmniAuthsController < ApplicationController
           else
             # Create new user with Spotify tokens
             user = User.create_from_oauth(auth)
+            
+            # Enqueue job to fetch anthem track for new user
+            FetchUserAnthemJob.perform_async(user.id)
           end
           
           identity = OmniAuthIdentity.create(uid: uid, provider: provider, user: user)

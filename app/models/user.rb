@@ -17,6 +17,8 @@ class User < ApplicationRecord
   has_many :user_albums
   has_many :albums, through: :user_albums, source: :album
 
+  belongs_to :anthem_track, class_name: 'Track', optional: true
+
   enum :role, [ :user, :admin ]
   # OAuth methods
   def self.create_from_oauth(auth)
@@ -609,6 +611,46 @@ class User < ApplicationRecord
     user_scores.select { |item| item[:score] >= min_score }
               .sort_by { |item| -item[:score] }
               .take(limit)
+  end
+  
+  #-----------------------
+  # Anthem Track Method
+  #-----------------------
+
+  def update_anthem_track!
+    # Ensure Spotify connection exists
+    return unless spotify_access_token.present?
+
+    # Fetch top track (long term, limit 1)
+    response = spotify_api_call("me/top/tracks", params: { time_range: 'long_term', limit: 1 })
+    
+    # Check if response is valid and has items
+    unless response && response['items'].is_a?(Array) && response['items'].any?
+      Rails.logger.warn("No top tracks found for user #{id} when fetching anthem.")
+      return
+    end
+
+    # Extract track data from the first item
+    track_data = response['items'].first
+    spotify_track_id = track_data['id']
+
+    # Find or create the Track record
+    track = Track.find_or_create_by(spotify_id: spotify_track_id) do |new_track|
+      new_track.song_name = track_data['name']
+      new_track.artist = track_data['artists']&.map { |a| a['name'] }&.join(', ')
+      new_track.image_url = track_data['album']&.[]('images')&.first&.[]('url')
+      new_track.preview_url = track_data['preview_url']
+    end
+
+    # Update the user's anthem track if it's different or not set
+    if track.persisted? && self.anthem_track_id != track.id
+      self.update(anthem_track_id: track.id)
+      Rails.logger.info("Updated anthem track for user #{id} to track #{track.id} (#{track.song_name})")
+    end
+
+  rescue => e
+    Rails.logger.error("Error fetching/updating anthem track for user #{id}: #{e.message}")
+    Rails.logger.error(e.backtrace.join("\n"))
   end
   
   #-----------------------

@@ -66,7 +66,7 @@ class MusicCompatibilityService
     # (overall_score * 100).round(1)
   end
   
-  # Calculate compatibility using user embeddings based on Euclidean Distance
+  # Calculate compatibility using user embeddings based on Cosine Similarity
   def self.calculate_embedding_compatibility(user1, user2)
     # Ensure both users have embeddings
     unless user1.embedding.present? && user2.embedding.present?
@@ -81,19 +81,21 @@ class MusicCompatibilityService
       end
     end
     
-    # Cache key for the compatibility score (consider adding distance type to key if needed)
-    cache_key = "user_compatibility:#{[user1.id, user2.id].sort.join('-')}:euclidean:#{user1.updated_at.to_i}-#{user2.updated_at.to_i}"
+    # Cache key for the compatibility score (using cosine now)
+    cache_key = "user_compatibility:#{[user1.id, user2.id].sort.join('-')}:cosine:#{user1.updated_at.to_i}-#{user2.updated_at.to_i}"
     
     # Try to get from cache first
     cached_score = Rails.cache.read(cache_key)
     return cached_score if cached_score.present?
     
-    # Calculate Euclidean distance
-    distance = calculate_euclidean_distance(user1.embedding, user2.embedding)
+    # Calculate Cosine Similarity
+    similarity = cosine_similarity(user1.embedding, user2.embedding)
     
-    # Convert distance to similarity score (0-100 scale)
-    # Using similarity = 1 / (1 + distance) maps [0, inf) distance to (0, 1] similarity
-    similarity_score = (1.0 / (1.0 + distance)) * 100
+    # Convert similarity score from [-1, 1] range to [0, 100] scale
+    # (similarity + 1) maps [-1, 1] to [0, 2]
+    # / 2 maps [0, 2] to [0, 1]
+    # * 100 maps [0, 1] to [0, 100]
+    similarity_score = ((similarity + 1.0) / 2.0) * 100
     
     # Round the score
     score = similarity_score.round(1)
@@ -104,7 +106,7 @@ class MusicCompatibilityService
     score
   end
 
-  # Helper method to calculate Euclidean distance
+  # Helper method to calculate Euclidean distance (Keep for potential other uses)
   def self.calculate_euclidean_distance(vec1, vec2)
     return Float::INFINITY unless vec1.is_a?(Array) && vec2.is_a?(Array) && vec1.size == vec2.size && vec1.size > 0
 

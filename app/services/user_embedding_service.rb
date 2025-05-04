@@ -22,7 +22,7 @@ class UserEmbeddingService
                                   .pluck(:embedding)
     
     # Combine all item embeddings into a single list
-    all_embeddings = track_embeddings + artist_embeddings + album_embeddings
+    all_embeddings = track_embeddings #+ artist_embeddings + album_embeddings
 
     # Calculate the final user embedding (average of all item embeddings)
     user_embedding = calculate_average_embedding(all_embeddings) if all_embeddings.any?

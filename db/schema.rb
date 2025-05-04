@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2025_04_22_163753) do
+ActiveRecord::Schema[8.0].define(version: 2025_05_04_174556) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "vector"
@@ -26,7 +26,7 @@ ActiveRecord::Schema[8.0].define(version: 2025_04_22_163753) do
     t.float "length"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.vector "embedding", limit: 1536
+    t.vector "embedding", limit: 512
     t.integer "popularity"
     t.index ["album_id"], name: "index_album_features_on_album_id"
   end
@@ -51,7 +51,7 @@ ActiveRecord::Schema[8.0].define(version: 2025_04_22_163753) do
     t.integer "energy_level"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.vector "embedding", limit: 1536
+    t.vector "embedding", limit: 512
     t.integer "popularity"
     t.index ["artist_id"], name: "index_artist_features_on_artist_id"
   end
@@ -115,7 +115,7 @@ ActiveRecord::Schema[8.0].define(version: 2025_04_22_163753) do
     t.float "length"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.vector "embedding", limit: 1536
+    t.vector "embedding", limit: 512
     t.integer "popularity"
     t.index ["track_id"], name: "index_track_features_on_track_id"
   end
@@ -169,7 +169,7 @@ ActiveRecord::Schema[8.0].define(version: 2025_04_22_163753) do
     t.string "spotify_refresh_token"
     t.datetime "spotify_token_expires_at"
     t.integer "role", default: 0
-    t.vector "embedding", limit: 1536
+    t.vector "embedding", limit: 512
     t.bigint "anthem_track_id"
     t.index ["anthem_track_id"], name: "index_users_on_anthem_track_id"
     t.index ["email_address"], name: "index_users_on_email_address", unique: true

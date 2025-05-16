@@ -178,7 +178,7 @@ class MusicRecommendationService
     end
     
     Rails.logger.info "Found #{recommended_tracks.size} track recommendations for user #{user.id}"
-    recommended_tracks
+    recommended_tracks.uniq
   end
   
   # Get artist recommendations using embedding similarity

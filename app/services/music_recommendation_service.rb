@@ -211,7 +211,7 @@ class MusicRecommendationService
       
       recommended_artists << {
         id: artist.spotify_id,
-        name: artist.artist_name
+        name: artist.name
         # Add other fields if needed, e.g., image_url from artist model
       }
     end

@@ -209,11 +209,7 @@ class MusicRecommendationService
       artist = artist_feature.artist
       next unless artist
       
-      recommended_artists << {
-        id: artist.spotify_id,
-        name: artist.name
-        # Add other fields if needed, e.g., image_url from artist model
-      }
+      artist
     end
     
     Rails.logger.info "Found #{recommended_artists.size} artist recommendations for user #{user.id}"

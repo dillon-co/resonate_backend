@@ -8,7 +8,7 @@ class ArtistDataJob
     # Process the artist if found
     if artist
       Rails.logger.info "Processing artist data for: #{artist.name}"
-      # MusicAnalysisService.process_artist(artist)
+      MusicAnalysisService.process_artist(artist)
       Rails.logger.info "Completed processing artist data for ID: #{artist_id}"
     else
       Rails.logger.error "Artist with ID #{artist_id} not found"

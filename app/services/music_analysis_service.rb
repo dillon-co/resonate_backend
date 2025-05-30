@@ -1,545 +1,603 @@
-class MusicCompatibilityService
-  # Calculate musical compatibility between two users
-  def self.calculate_compatibility(user1, user2, options = {})
-    # Options: depth, use_cache, include_breakdown
-    depth = options[:depth] || :overall
-    use_cache = options.fetch(:use_cache, true)
-    include_breakdown = options[:include_breakdown] || false
+class MusicAnalysisService
+  # Deezer API configuration
+  API_ROOT = 'https://api.deezer.com'
+  
+  # Process a track and save its features
+  def self.process_track(track)
+    return nil unless track.is_a?(Track) && track.persisted?
     
-    # Check if both users have embeddings
-    if user1.embedding.present? && user2.embedding.present?
-      score = calculate_embedding_compatibility(user1, user2, use_cache: use_cache)
+    # Check if features already exist
+    existing_features = TrackFeature.find_by(track_id: track.id)
+    return existing_features if existing_features.present?
+    
+    # Get track data from Deezer
+    track_data = get_track_data(track.song_name, track.artist)
+    
+    # Log if we got empty features
+    if track_data == default_features
+      Rails.logger.warn("Failed to get features for track: #{track.song_name} by #{track.artist}")
+    end
+    
+    # Save features to database (even if default)
+    save_track_features(track, track_data)
+  end
+  
+  # Get track data from Deezer API
+  def self.get_track_data(track_name, artist_name)
+    return default_features if track_name.blank? || artist_name.blank?
+    
+    # Clean up the track and artist names
+    track_name = clean_search_term(track_name)
+    artist_name = clean_search_term(artist_name)
+    
+    cache_key = "deezer:track:#{track_name}:#{artist_name}"
+    cached_info = Rails.cache.read(cache_key)
+    return cached_info if cached_info.present?
+    
+    begin
+      # Try exact match first
+      features = search_track_exact(track_name, artist_name)
       
-      if include_breakdown
-        breakdown = calculate_compatibility_breakdown(user1, user2)
-        return { score: score, breakdown: breakdown }
-      else
-        return score
+      # If exact match fails, try looser search
+      if features == default_features
+        features = search_track_loose(track_name, artist_name)
       end
-    end
-    
-    # Fallback to feature-based compatibility if no embeddings
-    calculate_feature_based_compatibility(user1, user2, depth: depth, include_breakdown: include_breakdown)
-  end
-  
-  # Calculate compatibility using user embeddings based on Cosine Similarity
-  def self.calculate_embedding_compatibility(user1, user2, use_cache: true)
-    # Ensure both users have embeddings
-    unless user1.embedding.present? && user2.embedding.present?
-      # Try to generate embeddings if not present
-      UserEmbeddingService.update_embedding_for(user1) unless user1.embedding.present?
-      UserEmbeddingService.update_embedding_for(user2) unless user2.embedding.present?
       
-      # Reload users to get updated embeddings
-      user1.reload
-      user2.reload
+      # Cache even default features to avoid repeated failed API calls
+      Rails.cache.write(cache_key, features, expires_in: features == default_features ? 1.hour : 7.days)
+      features
       
-      # If still no embeddings, return a default low score
-      unless user1.embedding.present? && user2.embedding.present?
-        Rails.logger.warn("Could not generate embeddings for compatibility check between users #{user1.id} and #{user2.id}")
-        return 0
-      end
+    rescue => e
+      Rails.logger.error("Error calling Deezer API: #{e.message}")
+      default_features
     end
-    
-    if use_cache
-      # Cache key for the compatibility score
-      cache_key = compatibility_cache_key(user1, user2)
-      
-      # Try to get from cache first
-      cached_score = Rails.cache.read(cache_key)
-      return cached_score if cached_score.present?
-    end
-    
-    # Parse embeddings (handle different formats)
-    embedding1 = parse_embedding(user1.embedding)
-    embedding2 = parse_embedding(user2.embedding)
-    
-    # Calculate Cosine Similarity
-    similarity = cosine_similarity(embedding1, embedding2)
-    
-    # Convert similarity score from [-1, 1] range to [0, 100] scale
-    score = normalize_similarity_score(similarity)
-    
-    # Cache the result if caching is enabled
-    if use_cache
-      Rails.cache.write(cache_key, score, expires_in: 1.day)
-    end
-    
-    score
-  end
-  
-  # Calculate feature-based compatibility (fallback when no embeddings)
-  def self.calculate_feature_based_compatibility(user1, user2, depth: :overall, include_breakdown: false)
-    scores = {}
-    
-    # Compare shared tracks
-    track_score = calculate_track_overlap_score(user1, user2)
-    scores[:tracks] = track_score
-    
-    # Compare shared artists
-    artist_score = calculate_artist_overlap_score(user1, user2)
-    scores[:artists] = artist_score
-    
-    # Compare shared albums
-    album_score = calculate_album_overlap_score(user1, user2)
-    scores[:albums] = album_score
-    
-    # Compare music features (genres, moods, etc.)
-    feature_score = calculate_feature_similarity_score(user1, user2)
-    scores[:features] = feature_score
-    
-    # Check anthem compatibility
-    anthem_score = calculate_anthem_compatibility(user1, user2)
-    scores[:anthem] = anthem_score
-    
-    # Calculate weighted overall score
-    overall_score = calculate_weighted_score(scores, depth)
-    
-    if include_breakdown
-      { score: overall_score, breakdown: scores }
-    else
-      overall_score
-    end
-  end
-  
-  # Calculate compatibility breakdown for detailed insights
-  def self.calculate_compatibility_breakdown(user1, user2)
-    breakdown = {}
-    
-    # Shared content analysis
-    breakdown[:shared_tracks] = shared_tracks_analysis(user1, user2)
-    breakdown[:shared_artists] = shared_artists_analysis(user1, user2)
-    breakdown[:shared_albums] = shared_albums_analysis(user1, user2)
-    
-    # Feature analysis
-    breakdown[:genre_compatibility] = genre_compatibility_analysis(user1, user2)
-    breakdown[:mood_compatibility] = mood_compatibility_analysis(user1, user2)
-    
-    # Anthem analysis
-    if user1.anthem_track_id || user2.anthem_track_id
-      breakdown[:anthem_compatibility] = anthem_compatibility_analysis(user1, user2)
-    end
-    
-    breakdown
-  end
-  
-  # Find most compatible users for a given user
-  def self.find_compatible_users(user, limit: 10, min_score: 50)
-    return [] unless user.embedding.present?
-    
-    # Get all other users with embeddings
-    candidates = User.where.not(id: user.id)
-                     .where.not(embedding: nil)
-                     .select(:id, :display_name, :profile_photo_url, :embedding)
-    
-    # Calculate compatibility scores
-    compatible_users = []
-    
-    candidates.find_each do |candidate|
-      score = calculate_embedding_compatibility(user, candidate, use_cache: true)
-      
-      if score >= min_score
-        compatible_users << {
-          user: candidate,
-          score: score,
-          compatibility_level: compatibility_level(score)
-        }
-      end
-    end
-    
-    # Sort by score and return top N
-    compatible_users.sort_by { |item| -item[:score] }
-                    .first(limit)
-  end
-  
-  # Get compatibility insights between two users
-  def self.get_compatibility_insights(user1, user2)
-    insights = []
-    
-    # Get basic compatibility score
-    score = calculate_compatibility(user1, user2, include_breakdown: true)
-    overall_score = score[:score]
-    breakdown = score[:breakdown]
-    
-    # Generate insights based on score and breakdown
-    if overall_score >= 90
-      insights << "You two are musical soulmates! 🎵"
-    elsif overall_score >= 75
-      insights << "You have excellent musical compatibility!"
-    elsif overall_score >= 60
-      insights << "You share quite a bit of musical taste."
-    elsif overall_score >= 40
-      insights << "You have some musical common ground."
-    else
-      insights << "Your musical tastes are quite different - could be interesting!"
-    end
-    
-    # Specific insights from breakdown
-    if breakdown[:shared_artists][:count] > 5
-      insights << "You both love #{breakdown[:shared_artists][:top_shared].first(3).join(', ')}!"
-    end
-    
-    if breakdown[:genre_compatibility][:top_shared_genres].any?
-      insights << "You both enjoy #{breakdown[:genre_compatibility][:top_shared_genres].first(2).join(' and ')} music."
-    end
-    
-    if breakdown[:anthem_compatibility] && breakdown[:anthem_compatibility][:same_anthem]
-      insights << "You have the same anthem track! That's rare! 🎶"
-    end
-    
-    {
-      score: overall_score,
-      level: compatibility_level(overall_score),
-      insights: insights,
-      breakdown: breakdown
-    }
   end
   
   private
   
-  # Parse embedding from various formats
-  def self.parse_embedding(embedding)
-    case embedding
-    when Array
-      embedding
-    when String
-      JSON.parse(embedding)
-    else
-      embedding.to_a
+  # Clean search terms
+  def self.clean_search_term(term)
+    return '' if term.blank?
+    
+    # Remove common problematic characters and extra whitespace
+    term.to_s
+      .gsub(/\s+/, ' ')           # Replace multiple spaces with single space
+      .gsub(/[^\w\s\-']/, '')     # Keep only word chars, spaces, hyphens, apostrophes
+      .strip
+      .downcase
+  end
+  
+  # Try exact search with both track and artist
+  def self.search_track_exact(track_name, artist_name)
+    query = "track:\"#{track_name}\" artist:\"#{artist_name}\""
+    search_and_extract_features(query, track_name, artist_name)
+  end
+  
+  # Try looser search
+  def self.search_track_loose(track_name, artist_name)
+    # Try without quotes first
+    query = "#{track_name} #{artist_name}"
+    features = search_and_extract_features(query, track_name, artist_name)
+    
+    # If still no luck, try just the track name
+    if features == default_features && track_name.present?
+      query = track_name
+      features = search_and_extract_features(query, track_name, artist_name)
     end
-  rescue => e
-    Rails.logger.error("Error parsing embedding: #{e.message}")
-    []
+    
+    features
   end
   
-  # Generate cache key for compatibility
-  def self.compatibility_cache_key(user1, user2)
-    user_ids = [user1.id, user2.id].sort
-    timestamps = [user1.updated_at.to_i, user2.updated_at.to_i]
-    "music_compatibility:v2:#{user_ids.join('-')}:#{timestamps.join('-')}"
-  end
-  
-  # Normalize similarity score to 0-100 range
-  def self.normalize_similarity_score(similarity)
-    # Convert from [-1, 1] to [0, 100]
-    # Apply slight exponential curve to make differences more pronounced
-    normalized = (similarity + 1.0) / 2.0  # [0, 1]
-    curved = normalized ** 1.5  # Apply slight curve
-    (curved * 100).round(1)
-  end
-  
-  # Calculate track overlap score
-  def self.calculate_track_overlap_score(user1, user2)
-    user1_tracks = user1.tracks.pluck(:id).to_set
-    user2_tracks = user2.tracks.pluck(:id).to_set
-    
-    return 0 if user1_tracks.empty? || user2_tracks.empty?
-    
-    common = user1_tracks & user2_tracks
-    total = user1_tracks | user2_tracks
-    
-    # Jaccard similarity
-    (common.size.to_f / total.size * 100).round(1)
-  end
-  
-  # Calculate artist overlap score
-  def self.calculate_artist_overlap_score(user1, user2)
-    user1_artists = user1.artists.pluck(:id).to_set
-    user2_artists = user2.artists.pluck(:id).to_set
-    
-    return 0 if user1_artists.empty? || user2_artists.empty?
-    
-    common = user1_artists & user2_artists
-    total = user1_artists | user2_artists
-    
-    (common.size.to_f / total.size * 100).round(1)
-  end
-  
-  # Calculate album overlap score
-  def self.calculate_album_overlap_score(user1, user2)
-    user1_albums = user1.albums.pluck(:id).to_set
-    user2_albums = user2.albums.pluck(:id).to_set
-    
-    return 0 if user1_albums.empty? || user2_albums.empty?
-    
-    common = user1_albums & user2_albums
-    total = user1_albums | user2_albums
-    
-    (common.size.to_f / total.size * 100).round(1)
-  end
-  
-  # Calculate feature similarity score
-  def self.calculate_feature_similarity_score(user1, user2)
-    # Get top genres for each user
-    user1_genres = get_user_top_genres(user1)
-    user2_genres = get_user_top_genres(user2)
-    
-    return 0 if user1_genres.empty? || user2_genres.empty?
-    
-    # Calculate genre overlap
-    common_genres = user1_genres & user2_genres
-    total_genres = user1_genres | user2_genres
-    
-    (common_genres.size.to_f / total_genres.size * 100).round(1)
-  end
-  
-  # Calculate anthem compatibility
-  def self.calculate_anthem_compatibility(user1, user2)
-    return 0 unless user1.anthem_track_id && user2.anthem_track_id
-    
-    # Same anthem = perfect score
-    return 100 if user1.anthem_track_id == user2.anthem_track_id
-    
-    # Otherwise, compare anthem features
-    anthem1_features = TrackFeature.find_by(track_id: user1.anthem_track_id)
-    anthem2_features = TrackFeature.find_by(track_id: user2.anthem_track_id)
-    
-    return 0 unless anthem1_features && anthem2_features
-    
-    # Compare anthem embeddings if available
-    if anthem1_features.embedding.present? && anthem2_features.embedding.present?
-      similarity = cosine_similarity(
-        parse_embedding(anthem1_features.embedding),
-        parse_embedding(anthem2_features.embedding)
-      )
-      normalize_similarity_score(similarity)
-    else
-      # Fallback to feature comparison
-      compare_track_features_similarity(anthem1_features, anthem2_features)
+  # Search and extract features
+  def self.search_and_extract_features(query, track_name, artist_name)
+    response = Faraday.get("#{API_ROOT}/search") do |req|
+      req.params = { 
+        q: query,
+        limit: 25  # Get more results to find better matches
+      }
     end
+    
+    if response.status == 200
+      data = JSON.parse(response.body)
+      
+      if data['data'] && data['data'].any?
+        # Find the best match
+        track_data = find_best_match(data['data'], track_name, artist_name)
+        
+        if track_data
+          # Extract basic features
+          features = extract_basic_features(track_data)
+          
+          # Get additional track data if available
+          if track_data['id']
+            detailed_data = get_detailed_track_data(track_data['id'])
+            features = merge_detailed_features(features, detailed_data) if detailed_data
+          end
+          
+          return features
+        end
+      end
+    else
+      Rails.logger.error("Deezer API error: #{response.status} - #{response.body}")
+    end
+    
+    default_features
   end
   
-  # Get user's top genres
-  def self.get_user_top_genres(user, limit: 5)
-    # Get genres from user's tracks
-    track_genres = TrackFeature
-      .joins(track: :user_tracks)
-      .where(user_tracks: { user_id: user.id })
-      .where.not(genre: nil)
-      .group(:genre)
-      .order('COUNT(*) DESC')
-      .limit(limit)
-      .pluck(:genre)
+  # Extract basic features from search result
+  def self.extract_basic_features(track_data)
+    features = default_features.dup
     
-    track_genres.to_set
+    # Basic info available in search results
+    features[:duration_ms] = track_data['duration'] * 1000 if track_data['duration']
+    features[:preview_url] = track_data['preview'] if track_data['preview']
+    features[:explicit] = track_data['explicit_lyrics'] if track_data.key?('explicit_lyrics')
+    features[:rank] = track_data['rank'] if track_data['rank']
+    
+    # Calculate popularity from rank
+    if track_data['rank']
+      features[:popularity] = calculate_popularity_from_rank(track_data['rank'])
+    end
+    
+    features
   end
   
-  # Calculate weighted overall score
-  def self.calculate_weighted_score(scores, depth)
-    weights = case depth
-              when :shallow
-                { tracks: 0.3, artists: 0.3, albums: 0.2, features: 0.15, anthem: 0.05 }
-              when :medium
-                { tracks: 0.25, artists: 0.25, albums: 0.2, features: 0.2, anthem: 0.1 }
-              when :deep, :overall
-                { tracks: 0.2, artists: 0.25, albums: 0.15, features: 0.25, anthem: 0.15 }
-              else
-                { tracks: 0.2, artists: 0.2, albums: 0.2, features: 0.2, anthem: 0.2 }
-              end
+  # Merge detailed features
+  def self.merge_detailed_features(features, detailed_data)
+    features = features.dup
     
-    total_score = 0
-    total_weight = 0
+    # Merge in detailed data
+    features[:bpm] = detailed_data[:bpm] if detailed_data[:bpm] && detailed_data[:bpm] > 0
+    features[:release_date] = detailed_data[:release_date] if detailed_data[:release_date]
     
-    scores.each do |key, score|
-      if weights[key] && score
-        total_score += score * weights[key]
-        total_weight += weights[key]
+    # Get album info for genre
+    if detailed_data[:album] && detailed_data[:album][:id]
+      album_data = get_album_genres(detailed_data[:album][:id])
+      if album_data && album_data[:genres].present?
+        features[:genre] = album_data[:genres].first
+        features[:tags] = album_data[:genres]
       end
     end
     
-    total_weight > 0 ? (total_score / total_weight).round(1) : 0
+    # Estimate features based on available data
+    features = estimate_audio_features(features)
+    
+    features
   end
   
-  # Shared tracks analysis
-  def self.shared_tracks_analysis(user1, user2)
-    shared_track_ids = user1.tracks.pluck(:id) & user2.tracks.pluck(:id)
+  # Get album genres (simplified version)
+  def self.get_album_genres(album_id)
+    cache_key = "deezer:album:genres:#{album_id}"
+    cached = Rails.cache.read(cache_key)
+    return cached if cached
     
-    shared_tracks = Track.where(id: shared_track_ids)
-                         .includes(:track_feature)
-                         .limit(10)
+    begin
+      response = Faraday.get("#{API_ROOT}/album/#{album_id}")
+      
+      if response.status == 200
+        data = JSON.parse(response.body)
+        
+        genres = []
+        if data['genres'] && data['genres']['data']
+          genres = data['genres']['data'].map { |g| g['name'] }
+        elsif data['genre_id']
+          # Fallback to genre_id if genres not available
+          genre_name = get_genre_name(data['genre_id'])
+          genres = [genre_name] if genre_name
+        end
+        
+        result = { genres: genres }
+        Rails.cache.write(cache_key, result, expires_in: 30.days)
+        result
+      end
+    rescue => e
+      Rails.logger.error("Error getting album genres: #{e.message}")
+    end
     
-    {
-      count: shared_track_ids.size,
-      top_shared: shared_tracks.map { |t| "#{t.song_name} by #{t.artist}" }
+    { genres: [] }
+  end
+  
+  # Get genre name from ID
+  def self.get_genre_name(genre_id)
+    # Common Deezer genre IDs
+    genre_map = {
+      0 => "All",
+      132 => "Pop",
+      116 => "Rap/Hip Hop",
+      113 => "Dance",
+      165 => "R&B",
+      152 => "Rock",
+      129 => "Jazz",
+      98 => "Classical",
+      173 => "Films/Games",
+      464 => "Metal",
+      169 => "Soul & Funk",
+      2 => "African Music",
+      12 => "Arabic Music",
+      16 => "Asian Music",
+      153 => "Blues",
+      75 => "Brazilian Music",
+      81 => "Indian Music",
+      95 => "Kids",
+      197 => "Latin Music"
     }
+    
+    genre_map[genre_id]
   end
   
-  # Shared artists analysis
-  def self.shared_artists_analysis(user1, user2)
-    shared_artist_ids = user1.artists.pluck(:id) & user2.artists.pluck(:id)
+  # Estimate audio features based on available data
+  def self.estimate_audio_features(features)
+    features = features.dup
     
-    shared_artists = Artist.where(id: shared_artist_ids)
-                           .order(:name)
-                           .limit(10)
+    # Estimate energy based on BPM
+    if features[:bpm] && features[:bpm] > 0
+      features[:energy] = case features[:bpm]
+                         when 0..80 then 0.3
+                         when 81..100 then 0.5
+                         when 101..120 then 0.6
+                         when 121..140 then 0.8
+                         else 0.9
+                         end
+      
+      # Estimate danceability based on BPM
+      features[:danceability] = case features[:bpm]
+                               when 90..130 then 0.8
+                               when 80..89, 131..140 then 0.6
+                               else 0.4
+                               end
+    end
     
-    {
-      count: shared_artist_ids.size,
-      top_shared: shared_artists.pluck(:name)
-    }
+    # Estimate mood based on genre
+    if features[:genre]
+      features[:mood] = estimate_mood_from_genre(features[:genre])
+      features[:acousticness] = estimate_acousticness_from_genre(features[:genre])
+    end
+    
+    # Adjust mood if explicit
+    if features[:explicit] == true
+      features[:mood] = [features[:mood] - 0.1, 0.1].max
+    end
+    
+    features
   end
   
-  # Shared albums analysis
-  def self.shared_albums_analysis(user1, user2)
-    shared_album_ids = user1.albums.pluck(:id) & user2.albums.pluck(:id)
+  # Estimate mood from genre
+  def self.estimate_mood_from_genre(genre)
+    genre_lower = genre.to_s.downcase
     
-    shared_albums = Album.where(id: shared_album_ids).limit(10)
-    
-    {
-      count: shared_album_ids.size,
-      top_shared: shared_albums.map { |a| "#{a.title || 'Unknown'} by #{a.artist}" }
-    }
-  end
-  
-  # Genre compatibility analysis
-  def self.genre_compatibility_analysis(user1, user2)
-    user1_genres = get_user_genre_distribution(user1)
-    user2_genres = get_user_genre_distribution(user2)
-    
-    shared_genres = user1_genres.keys & user2_genres.keys
-    
-    {
-      user1_top_genres: user1_genres.first(3).map(&:first),
-      user2_top_genres: user2_genres.first(3).map(&:first),
-      top_shared_genres: shared_genres.first(3)
-    }
-  end
-  
-  # Mood compatibility analysis
-  def self.mood_compatibility_analysis(user1, user2)
-    user1_moods = get_user_mood_distribution(user1)
-    user2_moods = get_user_mood_distribution(user2)
-    
-    {
-      user1_dominant_mood: user1_moods.first&.first || "varied",
-      user2_dominant_mood: user2_moods.first&.first || "varied",
-      mood_alignment: calculate_mood_alignment(user1_moods, user2_moods)
-    }
-  end
-  
-  # Anthem compatibility analysis
-  def self.anthem_compatibility_analysis(user1, user2)
-    result = { same_anthem: false }
-    
-    if user1.anthem_track_id == user2.anthem_track_id
-      result[:same_anthem] = true
-      result[:anthem] = Track.find_by(id: user1.anthem_track_id)&.song_name
+    case genre_lower
+    when /classical|jazz|blues/
+      0.5
+    when /metal|rap|hip hop/
+      0.4
+    when /pop|dance|electronic/
+      0.7
+    when /soul|r&b|funk/
+      0.6
     else
-      result[:user1_anthem] = Track.find_by(id: user1.anthem_track_id)&.song_name
-      result[:user2_anthem] = Track.find_by(id: user2.anthem_track_id)&.song_name
-      result[:anthem_similarity] = calculate_anthem_compatibility(user1, user2)
+      0.5
     end
-    
-    result
   end
   
-  # Get user genre distribution
-  def self.get_user_genre_distribution(user)
-    TrackFeature
-      .joins(track: :user_tracks)
-      .where(user_tracks: { user_id: user.id })
-      .where.not(genre: nil)
-      .group(:genre)
-      .order('COUNT(*) DESC')
-      .count
-  end
-  
-  # Get user mood distribution
-  def self.get_user_mood_distribution(user)
-    TrackFeature
-      .joins(track: :user_tracks)
-      .where(user_tracks: { user_id: user.id })
-      .where.not(mood: nil)
-      .group(:mood)
-      .order('COUNT(*) DESC')
-      .count
-  end
-  
-  # Calculate mood alignment
-  def self.calculate_mood_alignment(moods1, moods2)
-    return "low" if moods1.empty? || moods2.empty?
+  # Estimate acousticness from genre
+  def self.estimate_acousticness_from_genre(genre)
+    genre_lower = genre.to_s.downcase
     
-    # Get top moods
-    top_mood1 = moods1.first&.first
-    top_mood2 = moods2.first&.first
-    
-    if top_mood1 == top_mood2
-      "high"
-    elsif (moods1.keys & moods2.keys).any?
-      "medium"
+    case genre_lower
+    when /classical|jazz|blues|folk|country/
+      0.8
+    when /acoustic/
+      0.9
+    when /electronic|dance|techno|house/
+      0.1
+    when /rock|metal/
+      0.3
     else
-      "low"
+      0.5
     end
   end
   
-  # Compare track features similarity
-  def self.compare_track_features_similarity(features1, features2)
-    score = 0
-    count = 0
+  # Calculate popularity from rank
+  def self.calculate_popularity_from_rank(rank)
+    return 0.5 unless rank && rank > 0
     
-    # Compare genre
-    if features1.genre && features2.genre
-      score += 25 if features1.genre == features2.genre
-      count += 1
-    end
-    
-    # Compare mood
-    if features1.mood && features2.mood
-      score += 25 if features1.mood == features2.mood
-      count += 1
-    end
-    
-    # Compare BPM (within 10% range)
-    if features1.bpm && features2.bpm && features1.bpm > 0 && features2.bpm > 0
-      bpm_ratio = [features1.bpm, features2.bpm].min.to_f / [features1.bpm, features2.bpm].max
-      score += 25 * bpm_ratio
-      count += 1
-    end
-    
-    # Compare energy/character
-    if features1.character && features2.character
-      score += 25 if features1.character == features2.character
-      count += 1
-    end
-    
-    count > 0 ? (score / count).round(1) : 0
-  end
-  
-  # Determine compatibility level
-  def self.compatibility_level(score)
-    case score
-    when 90..100
-      "Perfect Match"
-    when 75..89
-      "Very High"
-    when 60..74
-      "High"
-    when 45..59
-      "Medium"
-    when 30..44
-      "Low"
+    # Deezer rank: lower is better
+    # Convert to 0-1 scale where 1 is most popular
+    case rank
+    when 1..1000
+      0.9
+    when 1001..10000
+      0.8
+    when 10001..50000
+      0.7
+    when 50001..100000
+      0.6
+    when 100001..500000
+      0.5
+    when 500001..1000000
+      0.4
     else
-      "Very Low"
+      0.3
     end
   end
   
-  # Calculate cosine similarity between two vectors
-  def self.cosine_similarity(vec1, vec2)
-    return 0 unless vec1.is_a?(Array) && vec2.is_a?(Array) && vec1.size == vec2.size && vec1.size > 0
+  # Get detailed track data
+  def self.get_detailed_track_data(track_id)
+    cache_key = "deezer:track:details:#{track_id}"
+    cached = Rails.cache.read(cache_key)
+    return cached if cached
     
-    dot_product = 0
-    norm1 = 0
-    norm2 = 0
-    
-    vec1.zip(vec2).each do |v1, v2|
-      next unless v1.is_a?(Numeric) && v2.is_a?(Numeric)
-      dot_product += v1 * v2
-      norm1 += v1 * v1
-      norm2 += v2 * v2
+    begin
+      response = Faraday.get("#{API_ROOT}/track/#{track_id}")
+      
+      if response.status == 200
+        data = JSON.parse(response.body)
+        
+        result = {
+          id: data['id'],
+          title: data['title'],
+          duration_ms: data['duration'] * 1000,
+          release_date: data['release_date'],
+          bpm: data['bpm'].to_i,
+          explicit_lyrics: data['explicit_lyrics'],
+          preview_url: data['preview'],
+          rank: data['rank'],
+          album: {
+            id: data['album']['id'],
+            title: data['album']['title'],
+            cover: data['album']['cover_xl']
+          },
+          artist: {
+            id: data['artist']['id'],
+            name: data['artist']['name']
+          }
+        }
+        
+        Rails.cache.write(cache_key, result, expires_in: 7.days)
+        result
+      end
+    rescue => e
+      Rails.logger.error("Error getting detailed track data: #{e.message}")
     end
     
-    return 0 if norm1 == 0 || norm2 == 0
+    nil
+  end
+  
+  # Find the best match from search results
+  def self.find_best_match(results, track_name, artist_name)
+    # Normalize names for comparison
+    track_normalized = normalize_for_matching(track_name)
+    artist_normalized = normalize_for_matching(artist_name)
     
-    similarity = dot_product / (Math.sqrt(norm1) * Math.sqrt(norm2))
-    [[similarity, -1.0].max, 1.0].min
+    # Score each result
+    scored_results = results.map do |result|
+      score = calculate_match_score(
+        result,
+        track_normalized,
+        artist_normalized
+      )
+      { result: result, score: score }
+    end
+    
+    # Sort by score and get best match
+    best_match = scored_results.max_by { |r| r[:score] }
+    
+    # Only return if score is above threshold
+    best_match && best_match[:score] > 0.3 ? best_match[:result] : nil
+  end
+  
+  # Calculate match score
+  def self.calculate_match_score(result, target_track, target_artist)
+    track_score = string_similarity(
+      normalize_for_matching(result['title']),
+      target_track
+    )
+    
+    artist_score = string_similarity(
+      normalize_for_matching(result['artist']['name']),
+      target_artist
+    )
+    
+    # Weight artist match slightly higher
+    (track_score * 0.4) + (artist_score * 0.6)
+  end
+  
+  # Normalize string for matching
+  def self.normalize_for_matching(str)
+    return '' unless str
+    
+    str.to_s
+      .downcase
+      .gsub(/[^\w\s]/, '')  # Remove punctuation
+      .gsub(/\s+/, ' ')     # Normalize spaces
+      .strip
+  end
+  
+  # Simple string similarity
+  def self.string_similarity(str1, str2)
+    return 0.0 if str1.blank? || str2.blank?
+    return 1.0 if str1 == str2
+    
+    # Simple token-based similarity
+    tokens1 = str1.split.to_set
+    tokens2 = str2.split.to_set
+    
+    return 0.0 if tokens1.empty? || tokens2.empty?
+    
+    intersection = tokens1 & tokens2
+    union = tokens1 | tokens2
+    
+    intersection.size.to_f / union.size
+  end
+  
+  # Save track features to database
+  def self.save_track_features(track, features)
+    track_feature = TrackFeature.find_or_initialize_by(track_id: track.id)
+    
+    # Update attributes based on features from Deezer
+    track_feature.assign_attributes(
+      genre: features[:genre],
+      bpm: features[:bpm],
+      mood: mood_to_string(features[:mood]),
+      character: character_from_features(features),
+      movement: movement_from_bpm(features[:bpm]),
+      vocals: has_vocals_from_features(features),
+      emotion: emotion_from_mood(features[:mood]),
+      emotional_dynamics: emotional_dynamics_from_features(features),
+      instruments: instruments_from_features(features).join(", "),
+      length: features[:duration_ms] ? features[:duration_ms] / 1000.0 : nil,
+      popularity: (features[:popularity] * 100).to_i # Convert to percentage
+    )
+    
+    track_feature.save!
+    track_feature
+  rescue => e
+    Rails.logger.error("Failed to save track features: #{e.message}")
+    nil
+  end
+  
+  # Default features to use when API fails
+  def self.default_features
+    {
+      energy: 0.5,
+      mood: 0.5,
+      danceability: 0.5,
+      acousticness: 0.5,
+      popularity: 0.5,
+      bpm: nil,
+      duration_ms: nil,
+      tags: [],
+      genre: nil,
+      explicit: false
+    }
+  end
+  
+  # ... (include all the helper methods from the original: mood_to_string, character_from_features, etc.)
+  
+  # Convert mood float to string
+  def self.mood_to_string(mood_value)
+    return "neutral" unless mood_value
+    
+    case mood_value
+    when 0.0..0.3
+      "melancholic"
+    when 0.3..0.5
+      "neutral"
+    when 0.5..0.7
+      "upbeat"
+    when 0.7..1.0
+      "euphoric"
+    else
+      "neutral"
+    end
+  end
+  
+  # Determine character from features
+  def self.character_from_features(features)
+    return "balanced" unless features
+    
+    if features[:acousticness] && features[:acousticness] > 0.7
+      "acoustic"
+    elsif features[:energy] && features[:energy] > 0.7
+      "energetic"
+    elsif features[:danceability] && features[:danceability] > 0.7
+      "rhythmic"
+    else
+      "balanced"
+    end
+  end
+  
+  # Determine movement from BPM
+  def self.movement_from_bpm(bpm)
+    return "moderate" unless bpm && bpm > 0
+    
+    case bpm
+    when 1..70
+      "slow"
+    when 71..120
+      "moderate"
+    when 121..180
+      "fast"
+    else
+      "very fast"
+    end
+  end
+  
+  # Determine if track has vocals
+  def self.has_vocals_from_features(features)
+    return true unless features && features[:genre]
+    
+    instrumental_genres = ["classical", "instrumental", "ambient", "electronic"]
+    !instrumental_genres.any? { |g| features[:genre]&.downcase&.include?(g) }
+  end
+  
+  # Determine emotion from mood
+  def self.emotion_from_mood(mood_value)
+    return "neutral" unless mood_value
+    
+    case mood_value
+    when 0.0..0.3
+      "sad"
+    when 0.3..0.5
+      "contemplative"
+    when 0.5..0.7
+      "happy"
+    when 0.7..1.0
+      "joyful"
+    else
+      "neutral"
+    end
+  end
+  
+  # Determine emotional dynamics from features
+  def self.emotional_dynamics_from_features(features)
+    return "balanced" unless features
+    
+    energy = features[:energy] || 0.5
+    mood = features[:mood] || 0.5
+    
+    if energy > 0.7 && mood < 0.3
+      "intense sadness"
+    elsif energy > 0.7 && mood > 0.7
+      "euphoric"
+    elsif energy < 0.3 && mood < 0.3
+      "melancholic"
+    elsif energy < 0.3 && mood > 0.7
+      "peaceful joy"
+    else
+      "balanced"
+    end
+  end
+  
+  # Extract instruments from features
+  def self.instruments_from_features(features)
+    return ["vocals"] unless features && features[:genre]
+    
+    genre = features[:genre].to_s.downcase
+    
+    instruments = case genre
+    when /rock/
+      ["guitar", "drums", "bass", "vocals"]
+    when /pop/
+      ["synthesizer", "drums", "vocals", "piano"]
+    when /hip hop|rap/
+      ["drums", "synthesizer", "sampler", "vocals"]
+    when /electronic|dance|house|techno/
+      ["synthesizer", "drum machine", "sampler"]
+    when /jazz/
+      ["saxophone", "piano", "drums", "bass"]
+    when /classical/
+      ["violin", "piano", "cello", "flute"]
+    when /country|folk/
+      ["guitar", "banjo", "fiddle", "vocals"]
+    when /r&b|soul/
+      ["piano", "drums", "bass", "vocals"]
+    when /metal/
+      ["guitar", "drums", "bass", "vocals"]
+    else
+      ["vocals"]
+    end
+    
+    instruments.uniq
   end
 end

@@ -542,4 +542,4 @@ class MusicCompatibilityService
     similarity = dot_product / (Math.sqrt(norm1) * Math.sqrt(norm2))
     [[similarity, -1.0].max, 1.0].min
   end
-end
+endZZZ

@@ -34,7 +34,7 @@ gem "omniauth-rails_csrf_protection", "~> 1.0", ">= 1.0.2"
 gem 'omniauth-oauth2'
 
 gem 'jwt'
-gem 'faraday', '~> 2.7'  
+gem 'faraday', '~> 2.13'  
 # Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
 # gem "image_processing", "~> 1.2"
 
